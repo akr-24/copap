@@ -3,6 +3,7 @@ package com.copap;
 import com.copap.model.*;
 import com.copap.repository.*;
 import com.copap.service.*;
+import com.copap.engine.*;
 
 import java.util.List;
 import java.util.concurrent.ExecutorService;
@@ -41,6 +42,20 @@ public class MainApplication {
         System.out.println(o2.getOrderId());
 
 
+        DeadLetterQueue dlq = new DeadLetterQueue();
+        FailureAwareExecutor executor =
+                new FailureAwareExecutor(3, dlq);
+
+        executor.submit(new OrderProcessingTask(o1));
+
+        try {
+            Thread.sleep(3000);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt(); // best practice
+        }
+
+        System.out.println("DLQ size: " + dlq.size());
+        executor.shutdown();
 
     }
 }
