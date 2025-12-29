@@ -4,6 +4,7 @@ import com.copap.model.*;
 import com.copap.repository.*;
 import com.copap.service.*;
 import com.copap.engine.*;
+import com.copap.analytics.*;
 
 import java.util.List;
 import java.util.concurrent.ExecutorService;
@@ -24,6 +25,9 @@ public class MainApplication {
         service.advanceOrder("O1", OrderStatus.PAID); // will through exception
 
          **/
+
+
+        /** testing idempotency
 
         IdempotencyRepository idemRepo = new InMemoryIdempotencyRepository();
         OrderRepository orderRepo = new InMemoryOrderRepository();
@@ -57,5 +61,36 @@ public class MainApplication {
         System.out.println("DLQ size: " + dlq.size());
         executor.shutdown();
 
+
+         **/
+
+        /**
+         * testing analytics
+
+        SlidingWindowAnalytics analytics =
+                new SlidingWindowAnalytics(5 * 60 * 1000);
+
+        DeadLetterQueue dlq = new DeadLetterQueue();
+        FailureAwareExecutor executor =
+                new FailureAwareExecutor(2, dlq);
+        AnalyticsService analyticsService =
+                new AnalyticsService(analytics, executor);
+
+        // simulate orders
+        analyticsService.publish(new OrderEvent("O1", 500));
+        analyticsService.publish(new OrderEvent("O2", 1500));
+
+        try {
+            Thread.sleep(1000);
+        }catch (InterruptedException e){
+            e.printStackTrace();
+        }
+
+        System.out.println("Orders (last 5 min): " + analytics.getOrderCount());
+        System.out.println("Revenue (last 5 min): " + analytics.getRevenue());
+
+        executor.shutdown();
+        **
+         *         */
     }
 }

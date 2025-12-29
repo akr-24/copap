@@ -2,7 +2,7 @@ package com.copap.service;
 
 import com.copap.model.*;
 import com.copap.repository.*;
-
+import com.copap.analytics.*;
 import java.util.Objects;
 import java.util.List;
 
@@ -48,7 +48,9 @@ public class OrderService {
                                     requestHash
                             )
                     );
-
+//                    analyticsService.publish(
+//                            new OrderEvent(order.getOrderId(), order.totalAmount())
+//                    );
                     return order;
                 });
     }
