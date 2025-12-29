@@ -2,6 +2,7 @@ package com.copap.service;
 
 import com.copap.repository.OrderRepository;
 import com.copap.model.Order;
+import com.copap.model.OrderStatus;
 
 public class OrderService {
 
@@ -23,5 +24,12 @@ public class OrderService {
          */
 
         repository.save(order);
+    }
+
+    public void advanceOrder(String orderId, OrderStatus nextStatus) {
+        Order order = repository.findById(orderId)
+                .orElseThrow(() -> new IllegalArgumentException("Order not found"));
+
+        order.updateStatus(nextStatus);
     }
 }

@@ -18,7 +18,7 @@ public class MainApplication {
         Product product2 = new Product("P2", "charger", 6);
         Product p = new Product("P", "adapter", 9);
 
-//        Order order = new Order("O1", customer, List.of(product1, product2));
+        Order order = new Order("O1", customer, List.of(product1, product2));
 //
 //        System.out.println("Order ID: " + order.getOrderId());
 //        System.out.println("Status: " + order.getStatus());
@@ -27,25 +27,35 @@ public class MainApplication {
         OrderRepository repository = new InMemoryOrderRepository();
         OrderService service = new OrderService(repository);
 //        repository.save(order);
+        service.createOrder(order);
 //
 //        repository.findById("O1").ifPresent(o ->
 //                System.out.println("Found order with status: " + o.getStatus())
 //        );
 
-        ExecutorService executor = Executors.newFixedThreadPool(5);
+        // concurrency testing
+//        ExecutorService executor = Executors.newFixedThreadPool(5);
+//
+//        for (int i = 0; i < 10; i++) {
+//            executor.submit(() -> {
+//                Order order = new Order("O1", customer, List.of(p));
+//                try {
+//                    service.createOrder(order);
+//                    System.out.println("Order created by " + Thread.currentThread().getName());
+//                } catch (Exception e) {
+//                    System.out.println("Failed by " + Thread.currentThread().getName());
+//                }
+//            });
+//        }
+//
+//        executor.shutdown();
 
-        for (int i = 0; i < 10; i++) {
-            executor.submit(() -> {
-                Order order = new Order("O1", customer, List.of(p));
-                try {
-                    service.createOrder(order);
-                    System.out.println("Order created by " + Thread.currentThread().getName());
-                } catch (Exception e) {
-                    System.out.println("Failed by " + Thread.currentThread().getName());
-                }
-            });
-        }
+        System.out.println("Initial: " + order.getStatus());
 
-        executor.shutdown();
+        service.advanceOrder("O1", OrderStatus.VALIDATED);
+        System.out.println("After VALIDATED: " + order.getStatus());
+
+        service.advanceOrder("O1", OrderStatus.PAID); // ❌ illegal
+
     }
 }

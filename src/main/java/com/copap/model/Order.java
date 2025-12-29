@@ -28,7 +28,13 @@ public class Order {
     public Instant getCreatedAt() { return createdAt; }
     public OrderStatus getStatus() { return orderStatus; }
 
-    public void updateStatus(OrderStatus newStatus) {
+    // since state-transitions must be atomic, hence it is being coverted into synchronized
+    public synchronized void updateStatus(OrderStatus newStatus) {
+        if (!OrderStateMachine.canTransition(this.orderStatus, newStatus)) {
+            throw new IllegalStateException(
+                    "Illegal transition: " + this.orderStatus + " → " + newStatus
+            );
+        }
         this.orderStatus = newStatus;
     }
 
