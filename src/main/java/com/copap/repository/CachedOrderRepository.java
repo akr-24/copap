@@ -30,6 +30,29 @@ public class CachedOrderRepository implements OrderRepository {
         });
     }
 
+    public void updateWithVersion(Order order, long expectedVersion) {
+
+        cache.compute(order.getOrderId(), (id, existing) -> {
+
+            if (existing == null) {
+                throw new IllegalStateException("Order not in cache");
+            }
+
+            long currentVersion = existing.getVersion();
+
+            if (currentVersion != expectedVersion) {
+                throw new OptimisticLockException(
+                        "Stale update. Expected version " +
+                                expectedVersion + " but found " + currentVersion
+                );
+            }
+
+            // version matches → safe update
+            existing.incrementVersion();
+            return existing;
+        });
+    }
+
     @Override
     public Optional<Order> findById(String orderId) {
         VersionedOrder cached = cache.get(orderId);
@@ -47,5 +70,13 @@ public class CachedOrderRepository implements OrderRepository {
     @Override
     public boolean exists(String orderId) {
         return cache.containsKey(orderId) || delegate.exists(orderId);
+    }
+
+    public long getVersion(String orderId) {
+        VersionedOrder vo = cache.get(orderId);
+        if (vo == null) {
+            throw new IllegalStateException("Order not found in cache");
+        }
+        return vo.getVersion();
     }
 }

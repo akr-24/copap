@@ -61,4 +61,17 @@ public class OrderService {
 
         order.updateStatus(nextStatus);
     }
+
+    public void advanceOrderWithVersion(
+            String orderId,
+            OrderStatus nextStatus,
+            long expectedVersion
+    ) {
+        Order order = orderRepository.findById(orderId)
+                .orElseThrow(() -> new IllegalArgumentException("Order not found"));
+
+        order.updateStatus(nextStatus);
+
+        ((CachedOrderRepository) orderRepository).updateWithVersion(order, expectedVersion);
+    }
 }

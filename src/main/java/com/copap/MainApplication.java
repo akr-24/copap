@@ -92,5 +92,27 @@ public class MainApplication {
         executor.shutdown();
         **
          *         */
+        InMemoryOrderRepository baseRepo = new InMemoryOrderRepository();
+        CachedOrderRepository cachedRepo = new CachedOrderRepository(baseRepo);
+
+        OrderRepository orderRepo = cachedRepo;
+
+        IdempotencyRepository idempotencyRepo =
+                new InMemoryIdempotencyRepository();
+
+        OrderService service =
+                new OrderService(orderRepo, idempotencyRepo);
+        Customer customer = new Customer("C1", "Aman", "aman@gmail.com");
+        Product product = new Product("P1", "Phone", 50000);
+        Order order = new Order("O1", customer, List.of(product));
+        orderRepo.save(order);
+
+        long v1 = cachedRepo.getVersion("O1"); // thread A
+        long v2 = cachedRepo.getVersion("O1"); // thread B
+
+        service.advanceOrderWithVersion("O1", OrderStatus.VALIDATED, v1);
+
+          // stale update → should fail
+        service.advanceOrderWithVersion("O1", OrderStatus.FAILED, v2);
     }
 }
