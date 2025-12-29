@@ -1,15 +1,19 @@
 package com.copap.service;
 
-import com.copap.repository.OrderRepository;
-import com.copap.model.Order;
-import com.copap.model.OrderStatus;
+import com.copap.model.*;
+import com.copap.repository.*;
+
+import java.util.Objects;
+import java.util.List;
 
 public class OrderService {
 
-    private final OrderRepository repository;
+    private final OrderRepository orderRepository;
+    private final IdempotencyRepository idempotencyRepository;
 
-    public OrderService(OrderRepository repository) {
-        this.repository = repository;
+    public OrderService(OrderRepository repository, IdempotencyRepository idempotencyRepository) {
+        this.orderRepository = repository;
+        this.idempotencyRepository = idempotencyRepository;
     }
 
     public void createOrder(Order order) {
@@ -23,11 +27,34 @@ public class OrderService {
         }
          */
 
-        repository.save(order);
+        orderRepository.save(order);
+    }
+
+    public Order createOrder(String idempotencyKey, Customer customer, List<Product> products) {
+        String requestHash = Objects.hash(customer.getCustomerId(), products) + "";
+
+        return idempotencyRepository.find(idempotencyKey)
+                .map(record -> orderRepository.findById(record.getOrderId()).orElseThrow()).orElseGet(() -> {
+
+                    String orderId = "O-" + System.nanoTime();
+                    Order order = new Order(orderId, customer, products);
+
+                    orderRepository.save(order);
+
+                    idempotencyRepository.save(
+                            new IdempotencyRecord(
+                                    idempotencyKey,
+                                    orderId,
+                                    requestHash
+                            )
+                    );
+
+                    return order;
+                });
     }
 
     public void advanceOrder(String orderId, OrderStatus nextStatus) {
-        Order order = repository.findById(orderId)
+        Order order = orderRepository.findById(orderId)
                 .orElseThrow(() -> new IllegalArgumentException("Order not found"));
 
         order.updateStatus(nextStatus);
