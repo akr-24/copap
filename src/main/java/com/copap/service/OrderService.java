@@ -16,10 +16,12 @@ public class OrderService {
          * this will not handle concurrency as Multiple threads
          * can create the order because the existence check and save are not atomic.
          *
-         */
+
         if (repository.exists(order.getOrderId())) {
             throw new IllegalStateException("Order already exists");
         }
+         */
+
         repository.save(order);
     }
 }
