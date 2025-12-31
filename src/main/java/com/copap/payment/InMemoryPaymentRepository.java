@@ -1,6 +1,6 @@
 package com.copap.payment;
 
-import java.util.Map;
+import java.util.*;
 import java.util.Optional;
 import java.util.concurrent.ConcurrentHashMap;
 
@@ -17,5 +17,15 @@ public class InMemoryPaymentRepository implements PaymentRepository {
     @Override
     public void save(Payment payment) {
         payments.put(payment.getOrderId(), payment);
+    }
+
+    @Override
+    public List<Payment> findIncompletePayments() {
+        return payments.values().stream()
+                .filter(p ->
+                        p.getStatus() == PaymentStatus.INITIATED ||
+                                p.getStatus() == PaymentStatus.PROCESSING
+                )
+                .toList();
     }
 }
