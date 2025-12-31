@@ -5,16 +5,18 @@ import com.copap.model.OrderStatus;
 import com.copap.repository.OrderRepository;
 import com.copap.engine.FailureAwareExecutor;
 import com.copap.engine.OrderProcessingTask;
+import com.copap.payment.PaymentService;
 
 public class OrderRecoveryService {
 
     private final OrderRepository repository;
     private final FailureAwareExecutor executor;
-
+    private final PaymentService paymentService;
     public OrderRecoveryService(OrderRepository repository,
-                                FailureAwareExecutor executor) {
+                                FailureAwareExecutor executor, PaymentService paymentService) {
         this.repository = repository;
         this.executor = executor;
+        this.paymentService = paymentService;
     }
 
     public void recover(Order order) {
@@ -28,7 +30,7 @@ public class OrderRecoveryService {
                             " from state " + status
             );
 
-            executor.submit(new OrderProcessingTask(order));
+            executor.submit(new OrderProcessingTask(order, paymentService));
         }
     }
 }

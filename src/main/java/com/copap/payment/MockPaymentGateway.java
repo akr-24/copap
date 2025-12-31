@@ -7,6 +7,7 @@ public class MockPaymentGateway implements PaymentGateway {
     @Override
     public PaymentResult charge(String paymentId, String orderId, double amount){
         int outcome = random.nextInt(10);
+        System.out.println("this part is being hti");
         if (outcome < 6) {
             return PaymentResult.SUCCESS;
         } else if (outcome < 8) {

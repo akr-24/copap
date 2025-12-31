@@ -5,6 +5,7 @@ import com.copap.repository.*;
 import com.copap.service.*;
 import com.copap.engine.*;
 import com.copap.analytics.*;
+import com.copap.payment.*;
 
 import java.util.List;
 import java.util.concurrent.ExecutorService;
@@ -107,12 +108,23 @@ public class MainApplication {
         Order order = new Order("O1", customer, List.of(product));
         orderRepo.save(order);
 
-        long v1 = cachedRepo.getVersion("O1"); // thread A
-        long v2 = cachedRepo.getVersion("O1"); // thread B
-
-        service.advanceOrderWithVersion("O1", OrderStatus.VALIDATED, v1);
-
-          // stale update → should fail
-        service.advanceOrderWithVersion("O1", OrderStatus.FAILED, v2);
+        order.updateStatus(OrderStatus.VALIDATED);
+        order.updateStatus(OrderStatus.INVENTORY_RESERVED);
+        order.updateStatus(OrderStatus.PAYMENT_PENDING);
+        PaymentGateway gateway = new MockPaymentGateway();
+        PaymentRepository paymentRepo = new InMemoryPaymentRepository();
+        PaymentService paymentService =
+                new PaymentService(gateway, paymentRepo);
+        DeadLetterQueue dlq = new DeadLetterQueue();
+        FailureAwareExecutor executor = new FailureAwareExecutor(3, dlq);
+        executor.submit(
+                new OrderProcessingTask(order, paymentService)
+        );
+        try {
+            Thread.sleep(10000);
+        }catch (InterruptedException e){
+            e.printStackTrace();
+        }
+        executor.shutdown();
     }
 }
