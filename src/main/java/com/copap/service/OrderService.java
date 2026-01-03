@@ -30,30 +30,34 @@ public class OrderService {
         orderRepository.save(order);
     }
 
-    public Order createOrder(String idempotencyKey, Customer customer, List<Product> products) {
-        String requestHash = Objects.hash(customer.getCustomerId(), products) + "";
+    public Order createOrder(String idempotencyKey,
+                             String requestHash,
+                             String orderId,
+                             String customerId,
+                             List<String> productIds,
+                             double totalAmount) {
 
-        return idempotencyRepository.find(idempotencyKey)
-                .map(record -> orderRepository.findById(record.getOrderId()).orElseThrow()).orElseGet(() -> {
+        IdempotencyRecord record =
+                idempotencyRepository.saveOrGet(
+                        idempotencyKey,
+                        requestHash,
+                        orderId
+                );
 
-                    String orderId = "O-" + System.nanoTime();
-                    Order order = new Order(orderId, customer, products);
-
-                    orderRepository.save(order);
-
-                    idempotencyRepository.save(
-                            new IdempotencyRecord(
-                                    idempotencyKey,
-                                    orderId,
-                                    requestHash
-                            )
+        return orderRepository
+                .findById(record.getOrderId())
+                .orElseGet(() -> {
+                    Order order = new Order(
+                            orderId,
+                            customerId,
+                            productIds,
+                            totalAmount
                     );
-//                    analyticsService.publish(
-//                            new OrderEvent(order.getOrderId(), order.totalAmount())
-//                    );
+                    orderRepository.save(order);
                     return order;
                 });
     }
+
 
     public void advanceOrder(String orderId, OrderStatus nextStatus) {
         Order order = orderRepository.findById(orderId)

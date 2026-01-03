@@ -36,11 +36,16 @@ public class Payment {
         return status;
     }
 
+    public String getPaymentId() { return paymentId; }
     public String getOrderId() {
         return orderId;
     }
 
     public double getAmount() {
         return amount;
+    }
+
+    public void setStatus(PaymentStatus status) {
+        this.status = status;
     }
 }

@@ -6,7 +6,10 @@ import java.util.Optional;
 
 public interface IdempotencyRepository {
 
-    Optional<IdempotencyRecord> find(String key);
+    IdempotencyRecord saveOrGet(
+            String idempotencyKey,
+            String requestHash,
+            String orderId
+    );
 
-    void save(IdempotencyRecord record);
 }

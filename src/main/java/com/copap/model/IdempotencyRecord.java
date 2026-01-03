@@ -9,14 +9,14 @@ public class IdempotencyRecord {
     private final String requestHash;
     private final Instant createdAt;
 
-    public IdempotencyRecord(String key, String orderId, String requestHash) {
+    public IdempotencyRecord(String key, String orderId, String requestHash, Instant createdAt) {
         this.key = key;
         this.orderId = orderId;
         this.requestHash = requestHash;
-        this.createdAt = Instant.now();
+        this.createdAt = createdAt;
     }
 
-    public String getKey() { return key; }
+    public String getIdempotencyKey() { return key; }
     public String getOrderId() { return orderId; }
     public String getRequestHash() { return requestHash; }
 }

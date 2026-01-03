@@ -10,4 +10,6 @@ public interface PaymentRepository {
     void save(Payment payment);
 
     List<Payment> findIncompletePayments();
+
+    void update(Payment payment);
 }
