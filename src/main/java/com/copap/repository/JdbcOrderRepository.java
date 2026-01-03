@@ -48,7 +48,7 @@ public class JdbcOrderRepository implements OrderRepository {
     @Override
     public Optional<Order> findById (String orderId) {
         try{
-           PreparedStatement stmt = connection.prepareStatement(" Select * from orders where orderId='?'");
+           PreparedStatement stmt = connection.prepareStatement(" Select * from orders where order_id=?");
            stmt.setString(1, orderId);
            ResultSet rs = stmt.executeQuery();
            if (!rs.next()) return Optional.empty();
