@@ -1,17 +1,20 @@
 package com.copap.api;
 
+import com.copap.api.dto.CreateOrderRequest;
 import com.copap.db.TransactionManager;
 import com.copap.engine.FailureAwareExecutor;
-import com.copap.engine.OrderProcessingTask;
 import com.copap.model.Order;
-import com.copap.model.OrderStatus;
 import com.copap.payment.PaymentService;
 import com.copap.product.ProductRepository;
 import com.copap.service.OrderService;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.sun.net.httpserver.HttpExchange;
 import com.sun.net.httpserver.HttpHandler;
 
 import java.io.IOException;
+import java.io.InputStream;
+import java.nio.charset.StandardCharsets;
+import java.util.List;
 
 public class OrderController implements HttpHandler {
 
@@ -20,6 +23,7 @@ public class OrderController implements HttpHandler {
     private final PaymentService paymentService;
     private final TransactionManager transactionManager;
     private final FailureAwareExecutor executor;
+    private static final ObjectMapper objectMapper = new ObjectMapper();
 
     public OrderController(OrderService orderService,
                            ProductRepository productRepository,
@@ -34,15 +38,49 @@ public class OrderController implements HttpHandler {
         this.executor = executor;
     }
 
+    private void handlePost(HttpExchange exchange) throws IOException {
+
+    }
+
     @Override
     public void handle(HttpExchange exchange) throws IOException {
 
         System.out.println("OrderController hit");
 
-        if (!exchange.getRequestMethod().equalsIgnoreCase("POST")) {
-            exchange.sendResponseHeaders(405, -1);
-            return;
+        String method = exchange.getRequestMethod();
+        String path = exchange.getRequestURI().getPath();
+
+        try {
+            // -------------------------
+            // POST /orders  (Create)
+            // -------------------------
+            if (method.equalsIgnoreCase("POST") && path.equals("/orders")) {
+                handleCreateOrder(exchange);
+                return;
+            }
+
+            // -------------------------
+            // GET /orders/{orderId}
+            // -------------------------
+            if (method.equalsIgnoreCase("GET") && path.startsWith("/orders/")) {
+                handleGetOrder(exchange);
+                return;
+            }
+
+            // -------------------------
+            // Unsupported route
+            // -------------------------
+            exchange.sendResponseHeaders(404, -1);
+
+        } catch (Exception e) {
+            e.printStackTrace();
+            exchange.sendResponseHeaders(500, -1);
+        } finally {
+            exchange.close();
         }
+    }
+
+    private void handleCreateOrder(HttpExchange exchange) throws IOException {
 
         String idempotencyKey =
                 exchange.getRequestHeaders().getFirst("Idempotency-Key");
@@ -52,64 +90,85 @@ public class OrderController implements HttpHandler {
             return;
         }
 
-        try {
-            // TEMP hardcoded input (JSON parsing comes next)
-            String customerId = "C1";
-            var productIds = java.util.List.of("P1");
+        InputStream is = exchange.getRequestBody();
+        String body = new String(is.readAllBytes(), StandardCharsets.UTF_8);
+        System.out.println("RAW BODY => " + body);
 
-            var products = productRepository.findByIds(productIds);
+        CreateOrderRequest request =
+                objectMapper.readValue(body, CreateOrderRequest.class);
 
-            double totalAmount =
-                    products.stream().mapToDouble(p -> p.getPrice()).sum();
+        String customerId = request.customerId;
+        List<String> productIds = request.productIds;
 
-            String requestHash =
-                    customerId + "|" + productIds + "|" + totalAmount;
+        var products = productRepository.findByIds(productIds);
 
-            String orderId = java.util.UUID.randomUUID().toString();
+        double totalAmount =
+                products.stream().mapToDouble(p -> p.getPrice()).sum();
 
-            Order order =
-                    orderService.createOrder(
-                            idempotencyKey,
-                            requestHash,
-                            customerId,
-                            productIds,
-                            totalAmount
-                    );
-            //mark payment pending
-//            orderService.advanceOrderWithVersion(order.getOrderId(), OrderStatus.VALIDATED, order.getVersion());
-//            orderService.advanceOrderWithVersion(order.getOrderId(), OrderStatus.INVENTORY_RESERVED, order.getVersion() +1);
-//            orderService.advanceOrderWithVersion(order.getOrderId(), OrderStatus.PAYMENT_PENDING, order.getVersion());
-            // trigger the payment processing
-            orderService.startPaymentProcessing(order.getOrderId());
+        String requestHash =
+                customerId + "|" + productIds + "|" + totalAmount;
 
-            String response =
-                    """
-                    {
-                      "orderId": "%s",
-                      "status": "%s",
-                      "totalAmount": %.2f
-                    }
-                    """.formatted(
-                            order.getOrderId(),
-                            order.getStatus(),
-                            order.totalAmount()
-                    );
+        Order order =
+                orderService.createOrder(
+                        idempotencyKey,
+                        requestHash,
+                        customerId,
+                        productIds,
+                        totalAmount
+                );
 
-            byte[] bytes = response.getBytes(java.nio.charset.StandardCharsets.UTF_8);
+        // Trigger async payment processing
+        orderService.startPaymentProcessing(order.getOrderId());
 
-            exchange.getResponseHeaders().add(
-                    "Content-Type", "application/json"
-            );
+        String response =
+                """
+                {
+                  "orderId": "%s",
+                  "status": "%s",
+                  "totalAmount": %.2f
+                }
+                """.formatted(
+                        order.getOrderId(),
+                        order.getStatus(),
+                        order.totalAmount()
+                );
 
-            exchange.sendResponseHeaders(200, bytes.length);
-            exchange.getResponseBody().write(bytes);
+        byte[] bytes = response.getBytes(StandardCharsets.UTF_8);
 
-        } catch (Exception e) {
-            e.printStackTrace();
-            exchange.sendResponseHeaders(500, -1);
-        } finally {
-            exchange.close();
-        }
+        exchange.getResponseHeaders().add("Content-Type", "application/json");
+        exchange.sendResponseHeaders(200, bytes.length);
+        exchange.getResponseBody().write(bytes);
+    }
+
+    private void handleGetOrder(HttpExchange exchange) throws IOException {
+
+        String path = exchange.getRequestURI().getPath();
+        String orderId = path.substring("/orders/".length());
+
+        Order order = orderService
+                .getOrder(orderId)
+                .orElseThrow(() -> new IllegalArgumentException("Order not found"));
+
+        String response =
+                """
+                {
+                  "orderId": "%s",
+                  "status": "%s",
+                  "totalAmount": %.2f,
+                  "version": %d
+                }
+                """.formatted(
+                        order.getOrderId(),
+                        order.getStatus(),
+                        order.totalAmount(),
+                        order.getVersion()
+                );
+
+        byte[] bytes = response.getBytes(StandardCharsets.UTF_8);
+
+        exchange.getResponseHeaders().add("Content-Type", "application/json");
+        exchange.sendResponseHeaders(200, bytes.length);
+        exchange.getResponseBody().write(bytes);
     }
 
 }
