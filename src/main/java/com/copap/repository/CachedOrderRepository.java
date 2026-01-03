@@ -30,6 +30,7 @@ public class CachedOrderRepository implements OrderRepository {
         });
     }
 
+    @Override
     public void updateWithVersion(Order order, long expectedVersion) {
 
         cache.compute(order.getOrderId(), (id, existing) -> {

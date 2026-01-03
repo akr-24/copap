@@ -71,4 +71,32 @@ public class JdbcOrderRepository implements OrderRepository {
     public boolean exists(String orderId) {
         return findById(orderId).isPresent();
     }
+
+    @Override
+    public void updateWithVersion(Order order, long expectedVersion) {
+        try {
+            PreparedStatement stmt = connection.prepareStatement(
+                    """
+                    UPDATE orders
+                    SET status = ?, version = version + 1
+                    WHERE order_id = ? AND version = ?
+                    """
+            );
+
+            stmt.setString(1, order.getStatus().name());
+            stmt.setString(2, order.getOrderId());
+            stmt.setLong(3, expectedVersion);
+
+            int updated = stmt.executeUpdate();
+
+            if (updated == 0) {
+                throw new OptimisticLockException(
+                        "Version mismatch for order " + order.getOrderId()
+                );
+            }
+
+        } catch (SQLException e) {
+            throw new RuntimeException(e);
+        }
+    }
 }

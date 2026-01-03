@@ -1,7 +1,11 @@
 package com.copap.api;
 
+import com.copap.db.TransactionManager;
+import com.copap.engine.FailureAwareExecutor;
 import com.copap.engine.OrderProcessingTask;
 import com.copap.model.Order;
+import com.copap.model.OrderStatus;
+import com.copap.payment.PaymentService;
 import com.copap.product.ProductRepository;
 import com.copap.service.OrderService;
 import com.sun.net.httpserver.HttpExchange;
@@ -13,11 +17,21 @@ public class OrderController implements HttpHandler {
 
     private final OrderService orderService;
     private final ProductRepository productRepository;
+    private final PaymentService paymentService;
+    private final TransactionManager transactionManager;
+    private final FailureAwareExecutor executor;
 
     public OrderController(OrderService orderService,
-                           ProductRepository productRepository) {
+                           ProductRepository productRepository,
+                           PaymentService paymentService,
+                           TransactionManager transactionManager,
+                           FailureAwareExecutor executor) {
+
         this.orderService = orderService;
         this.productRepository = productRepository;
+        this.paymentService = paymentService;
+        this.transactionManager = transactionManager;
+        this.executor = executor;
     }
 
     @Override
@@ -57,11 +71,16 @@ public class OrderController implements HttpHandler {
                     orderService.createOrder(
                             idempotencyKey,
                             requestHash,
-                            orderId,
                             customerId,
                             productIds,
                             totalAmount
                     );
+            //mark payment pending
+//            orderService.advanceOrderWithVersion(order.getOrderId(), OrderStatus.VALIDATED, order.getVersion());
+//            orderService.advanceOrderWithVersion(order.getOrderId(), OrderStatus.INVENTORY_RESERVED, order.getVersion() +1);
+//            orderService.advanceOrderWithVersion(order.getOrderId(), OrderStatus.PAYMENT_PENDING, order.getVersion());
+            // trigger the payment processing
+            orderService.startPaymentProcessing(order.getOrderId());
 
             String response =
                     """
