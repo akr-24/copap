@@ -44,6 +44,7 @@ public class OrderProcessingTask implements RetryableTask {
 
             switch (result) {
                 case SUCCESS -> {
+                    // First transition to PAID
                     orderService.advanceOrderWithVersion(
                             order.getOrderId(),
                             OrderStatus.PAID,
@@ -52,6 +53,17 @@ public class OrderProcessingTask implements RetryableTask {
                     System.out.println(
                             "Payment successful for order " +
                                     order.getOrderId()
+                    );
+                    
+                    // Then transition to SHIPPED (simulating immediate shipping)
+                    Order paidOrder = orderRepository.findById(order.getOrderId()).orElseThrow();
+                    orderService.advanceOrderWithVersion(
+                            paidOrder.getOrderId(),
+                            OrderStatus.SHIPPED,
+                            paidOrder.getVersion()
+                    );
+                    System.out.println(
+                            "Order shipped: " + order.getOrderId()
                     );
                 }
 

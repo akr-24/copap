@@ -20,28 +20,48 @@ public class LoginController implements HttpHandler {
     @Override
     public void handle(HttpExchange exchange) throws IOException {
 
-        if (!exchange.getRequestMethod().equalsIgnoreCase("POST")) {
-            exchange.sendResponseHeaders(405, -1);
-            return;
+        System.out.println("LoginController hit");
+
+        byte[] responseBytes = null;
+        int statusCode = 200;
+
+        try {
+            if (!exchange.getRequestMethod().equalsIgnoreCase("POST")) {
+                statusCode = 405;
+                return;
+            }
+
+            String body = new String(
+                    exchange.getRequestBody().readAllBytes(),
+                    StandardCharsets.UTF_8
+            );
+
+            System.out.println("Login body => " + body);
+
+            LoginRequest req =
+                    mapper.readValue(body, LoginRequest.class);
+
+            String token =
+                    authService.login(req.username, req.password);
+
+            String responseJson =
+                    "{ \"token\": \"" + token + "\" }";
+
+            responseBytes =
+                    responseJson.getBytes(StandardCharsets.UTF_8);
+
+            exchange.getResponseHeaders()
+                    .add("Content-Type", "application/json");
+
+        } catch (Exception e) {
+            e.printStackTrace();
+            statusCode = 401;
+            responseBytes = "Unauthorized".getBytes();
+        } finally {
+            exchange.sendResponseHeaders(statusCode, responseBytes.length);
+            exchange.getResponseBody().write(responseBytes);
+            exchange.close();
         }
-
-        LoginRequest req = mapper.readValue(
-                exchange.getRequestBody(),
-                LoginRequest.class
-        );
-
-        String token = authService.login(req.username, req.password);
-
-        String response = """
-            { "token": "%s" }
-            """.formatted(token);
-
-        byte[] bytes = response.getBytes(StandardCharsets.UTF_8);
-
-        exchange.getResponseHeaders().add("Content-Type", "application/json");
-        exchange.sendResponseHeaders(200, bytes.length);
-        exchange.getResponseBody().write(bytes);
-        exchange.close();
     }
 
     static class LoginRequest {

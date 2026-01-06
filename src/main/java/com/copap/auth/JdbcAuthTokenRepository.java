@@ -3,6 +3,7 @@ package com.copap.auth;
 import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
+import java.sql.Timestamp;
 import java.time.Instant;
 import java.util.Optional;
 
@@ -27,7 +28,10 @@ public class JdbcAuthTokenRepository implements AuthTokenRepository {
 
             stmt.setString(1, token.getToken());
             stmt.setString(2, token.getUserId());
-            stmt.setObject(3, token.getExpiresAt());
+            stmt.setTimestamp(
+                    3,
+                    java.sql.Timestamp.from(token.getExpiresAt())
+            );
 
             stmt.executeUpdate();
 
@@ -53,11 +57,14 @@ public class JdbcAuthTokenRepository implements AuthTokenRepository {
 
             if (!rs.next()) return Optional.empty();
 
+            Timestamp expiresAtTimestamp = rs.getTimestamp("expires_at");
+            Instant expiresAt = expiresAtTimestamp.toInstant();
+
             return Optional.of(
                     new AuthToken(
                             rs.getString("token"),
                             rs.getString("user_id"),
-                            rs.getObject("expires_at", Instant.class)
+                            expiresAt
                     )
             );
 

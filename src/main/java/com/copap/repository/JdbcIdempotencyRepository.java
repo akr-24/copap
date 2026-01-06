@@ -59,8 +59,8 @@ public class JdbcIdempotencyRepository
 
             return new IdempotencyRecord(
                     rs.getString("idempotency_key"),
-                    rs.getString("request_hash"),
                     rs.getString("order_id"),
+                    rs.getString("request_hash"),
                     rs.getTimestamp("created_at").toInstant()
             );
 

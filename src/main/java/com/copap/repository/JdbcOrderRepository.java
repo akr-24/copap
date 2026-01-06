@@ -23,11 +23,12 @@ public class JdbcOrderRepository implements OrderRepository {
                     connection.prepareStatement(
                             """
                             INSERT INTO orders
-                            (order_id, status, customer_id, total_amount, version, created_at)
-                            VALUES (?, ?, ?, ?, ?, ?)
+                            (order_id, status, customer_id, total_amount, version, created_at, shipping_address_id)
+                            VALUES (?, ?, ?, ?, ?, ?, ?)
                             ON CONFLICT (order_id) DO UPDATE
                             SET status = EXCLUDED.status,
-                                version = EXCLUDED.version
+                                version = EXCLUDED.version,
+                                shipping_address_id = COALESCE(EXCLUDED.shipping_address_id, orders.shipping_address_id)
                             """
                     );
 
@@ -37,6 +38,7 @@ public class JdbcOrderRepository implements OrderRepository {
             stmt.setDouble(4, order.totalAmount());
             stmt.setLong(5, order.getVersion());
             stmt.setTimestamp(6, Timestamp.from(Instant.now()));
+            stmt.setString(7, order.getShippingAddressId());
 
             stmt.executeUpdate();
 
@@ -58,7 +60,8 @@ public class JdbcOrderRepository implements OrderRepository {
                     rs.getString("customer_id"),                    // customerId
                     List.of(),                                      // productIds (TEMP)
                     rs.getDouble("total_amount"),
-                    rs.getLong("version")                        // version
+                    rs.getLong("version"),                          // version
+                    rs.getString("shipping_address_id")             // shippingAddressId
             );
 
             return Optional.of(order);
@@ -95,6 +98,34 @@ public class JdbcOrderRepository implements OrderRepository {
                 );
             }
 
+        } catch (SQLException e) {
+            throw new RuntimeException(e);
+        }
+    }
+
+    @Override
+    public List<Order> findByCustomerId(String customerId) {
+        try {
+            PreparedStatement stmt = connection.prepareStatement(
+                    "SELECT * FROM orders WHERE customer_id = ? ORDER BY created_at DESC"
+            );
+            stmt.setString(1, customerId);
+            ResultSet rs = stmt.executeQuery();
+
+            List<Order> orders = new java.util.ArrayList<>();
+            while (rs.next()) {
+                Order order = Order.fromDb(
+                        rs.getString("order_id"),
+                        OrderStatus.valueOf(rs.getString("status")),
+                        rs.getString("customer_id"),
+                        List.of(), // productIds - would need separate query for order_items
+                        rs.getDouble("total_amount"),
+                        rs.getLong("version"),
+                        rs.getString("shipping_address_id")
+                );
+                orders.add(order);
+            }
+            return orders;
         } catch (SQLException e) {
             throw new RuntimeException(e);
         }

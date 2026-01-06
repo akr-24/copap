@@ -53,6 +53,15 @@ public class OrderService {
                              String customerId,
                              List<String> productIds,
                              double totalAmount) {
+        return createOrder(idempotencyKey, requestHash, customerId, productIds, totalAmount, null);
+    }
+
+    public Order createOrder(String idempotencyKey,
+                             String requestHash,
+                             String customerId,
+                             List<String> productIds,
+                             double totalAmount,
+                             String shippingAddressId) {
 
         // 1. Generate a candidate orderId
         String candidateOrderId = UUID.randomUUID().toString();
@@ -77,7 +86,7 @@ public class OrderService {
         }
 
         // 5. Otherwise, create the order ONCE
-        Order order = new Order(finalOrderId, customerId, productIds, totalAmount);
+        Order order = new Order(finalOrderId, customerId, productIds, totalAmount, shippingAddressId);
 
         orderRepository.save(order);
         return order;
@@ -89,6 +98,7 @@ public class OrderService {
                 .orElseThrow(() -> new IllegalArgumentException("Order not found"));
 
         order.updateStatus(nextStatus);
+        orderRepository.save(order); // Persist the status change
     }
 
     public void advanceOrderWithVersion(

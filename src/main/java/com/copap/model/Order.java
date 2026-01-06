@@ -16,15 +16,21 @@ public class Order {
     private OrderStatus orderStatus;
     private final AtomicLong version;
     private double totalAmount;
+    private String shippingAddressId;
 
     public Order(String orderId, String customerId, List<String> productIds, double totalAmount) {
+        this(orderId, customerId, productIds, totalAmount, null);
+    }
+
+    public Order(String orderId, String customerId, List<String> productIds, double totalAmount, String shippingAddressId) {
         this.orderId = Objects.requireNonNull(orderId);
         this.customerId = Objects.requireNonNull(customerId);
         this.productIds = List.copyOf(productIds);
         this.createdAt = Instant.now();
         this.orderStatus = OrderStatus.NEW;
         this.version = new AtomicLong(0);
-        this.totalAmount = totalAmount; // will be set externally
+        this.totalAmount = totalAmount;
+        this.shippingAddressId = shippingAddressId;
     }
 
     public String getOrderId() { return orderId; }
@@ -55,6 +61,31 @@ public class Order {
         return totalAmount;
     }
 
+    public String getShippingAddressId() {
+        return shippingAddressId;
+    }
+
+    public void setShippingAddressId(String shippingAddressId) {
+        this.shippingAddressId = shippingAddressId;
+    }
+
+    public static Order fromDb(
+            String orderId,
+            OrderStatus status,
+            String customerId,
+            List<String> productIds,
+            double totalAmount,
+            long version,
+            String shippingAddressId
+    ) {
+        Order order = new Order(orderId, customerId, productIds, totalAmount, shippingAddressId);
+        order.orderStatus = status;
+        order.version.set(version);
+        order.totalAmount = totalAmount;
+        return order;
+    }
+
+    // Legacy overload for backward compatibility
     public static Order fromDb(
             String orderId,
             OrderStatus status,
@@ -63,11 +94,7 @@ public class Order {
             double totalAmount,
             long version
     ) {
-        Order order = new Order(orderId, customerId, productIds, totalAmount);
-        order.orderStatus = status;
-        order.version.set(version);
-        order.totalAmount = totalAmount;
-        return order;
+        return fromDb(orderId, status, customerId, productIds, totalAmount, version, null);
     }
 
     @Override

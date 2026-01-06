@@ -12,7 +12,7 @@ public final class OrderStateMachine {
 
     static {
         transitions.put(OrderStatus.NEW,
-                EnumSet.of(OrderStatus.VALIDATED, OrderStatus.FAILED));
+                EnumSet.of(OrderStatus.VALIDATED, OrderStatus.PAYMENT_PENDING, OrderStatus.FAILED));
 
         transitions.put(OrderStatus.VALIDATED,
                 EnumSet.of(OrderStatus.INVENTORY_RESERVED, OrderStatus.FAILED));

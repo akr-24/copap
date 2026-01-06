@@ -3,6 +3,7 @@ package com.copap.repository;
 import com.copap.model.Order;
 import com.copap.model.VersionedOrder;
 
+import java.util.List;
 import java.util.Optional;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
@@ -71,6 +72,12 @@ public class CachedOrderRepository implements OrderRepository {
     @Override
     public boolean exists(String orderId) {
         return cache.containsKey(orderId) || delegate.exists(orderId);
+    }
+
+    @Override
+    public List<Order> findByCustomerId(String customerId) {
+        // Delegate to underlying repository for customer-based queries
+        return delegate.findByCustomerId(customerId);
     }
 
     public long getVersion(String orderId) {

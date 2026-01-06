@@ -66,6 +66,28 @@ public class JdbcProductRepository implements ProductRepository {
         }
     }
 
+    @Override
+    public List<Product> findAll() {
+        try {
+            PreparedStatement stmt =
+                    connection.prepareStatement(
+                            "SELECT * FROM products"
+                    );
+
+            ResultSet rs = stmt.executeQuery();
+            List<Product> products = new ArrayList<>();
+
+            while (rs.next()) {
+                products.add(mapRow(rs));
+            }
+
+            return products;
+
+        } catch (SQLException e) {
+            throw new RuntimeException(e);
+        }
+    }
+
     private Product mapRow(ResultSet rs) throws SQLException {
         return new Product(
                 rs.getString("product_id"),
