@@ -1,53 +1,45 @@
 package com.copap.service;
 
-import com.copap.db.TransactionManager;
-import com.copap.engine.FailureAwareExecutor;
-import com.copap.engine.OrderProcessingTask;
+import com.copap.api.exception.OrderNotFoundException;
+import com.copap.events.OrderPlacedEvent;
 import com.copap.model.IdempotencyRecord;
 import com.copap.model.Order;
 import com.copap.model.OrderStatus;
+import com.copap.payment.PaymentResult;
 import com.copap.payment.PaymentService;
 import com.copap.repository.IdempotencyRepository;
 import com.copap.repository.OrderRepository;
+import org.springframework.context.ApplicationEventPublisher;
+import org.springframework.context.annotation.Lazy;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 
+@Service
 public class OrderService {
 
     private final OrderRepository orderRepository;
     private final IdempotencyRepository idempotencyRepository;
     private final PaymentService paymentService;
-    private final TransactionManager transactionManager;
-    private final FailureAwareExecutor executor;
+    private final AsyncOrderProcessor asyncOrderProcessor;
+    private final ApplicationEventPublisher eventPublisher;
+
     public OrderService(OrderRepository orderRepository,
                         IdempotencyRepository idempotencyRepository,
                         PaymentService paymentService,
-                        TransactionManager transactionManager,
-                        FailureAwareExecutor executor) {
-
+                        @Lazy AsyncOrderProcessor asyncOrderProcessor,
+                        ApplicationEventPublisher eventPublisher) {
         this.orderRepository = orderRepository;
         this.idempotencyRepository = idempotencyRepository;
         this.paymentService = paymentService;
-        this.transactionManager = transactionManager;
-        this.executor = executor;
+        this.asyncOrderProcessor = asyncOrderProcessor;
+        this.eventPublisher = eventPublisher;
     }
 
-    public void createOrder(Order order) {
-        /**
-         * this will not handle concurrency as Multiple threads
-         * can create the order because the existence check and save are not atomic.
-         *
-
-        if (repository.exists(order.getOrderId())) {
-            throw new IllegalStateException("Order already exists");
-        }
-         */
-
-        orderRepository.save(order);
-    }
-
+    @Transactional
     public Order createOrder(String idempotencyKey,
                              String requestHash,
                              String customerId,
@@ -56,6 +48,7 @@ public class OrderService {
         return createOrder(idempotencyKey, requestHash, customerId, productIds, totalAmount, null);
     }
 
+    @Transactional
     public Order createOrder(String idempotencyKey,
                              String requestHash,
                              String customerId,
@@ -63,70 +56,76 @@ public class OrderService {
                              double totalAmount,
                              String shippingAddressId) {
 
-        // 1. Generate a candidate orderId
         String candidateOrderId = UUID.randomUUID().toString();
 
-        // 2. Ask idempotency layer to decide
-        IdempotencyRecord record =
-                idempotencyRepository.saveOrGet(
-                        idempotencyKey,
-                        requestHash,
-                        candidateOrderId
-                );
+        IdempotencyRecord record = idempotencyRepository.saveOrGet(
+                idempotencyKey, requestHash, candidateOrderId
+        );
 
-        // 3. use the orderId from the record
         String finalOrderId = record.getOrderId();
 
-        // 4. If this was a duplicate request → order already exists
-        Optional<Order> existing =
-                orderRepository.findById(finalOrderId);
-
+        Optional<Order> existing = orderRepository.findById(finalOrderId);
         if (existing.isPresent()) {
-            return existing.get();   // idempotent return
+            return existing.get();
         }
 
-        // 5. Otherwise, create the order ONCE
         Order order = new Order(finalOrderId, customerId, productIds, totalAmount, shippingAddressId);
-
         orderRepository.save(order);
+
+        eventPublisher.publishEvent(new OrderPlacedEvent(finalOrderId, totalAmount));
+
         return order;
     }
 
-
+    @Transactional
     public void advanceOrder(String orderId, OrderStatus nextStatus) {
         Order order = orderRepository.findById(orderId)
-                .orElseThrow(() -> new IllegalArgumentException("Order not found"));
-
+                .orElseThrow(() -> new OrderNotFoundException(orderId));
         order.updateStatus(nextStatus);
-        orderRepository.save(order); // Persist the status change
+        orderRepository.save(order);
     }
 
-    public void advanceOrderWithVersion(
-            String orderId,
-            OrderStatus nextStatus,
-            long expectedVersion
-    ) {
+    // Not @Transactional — intended to be called from within an existing @Transactional boundary.
+    public void advanceOrderWithVersion(String orderId, OrderStatus nextStatus, long expectedVersion) {
         Order order = orderRepository.findById(orderId)
-                .orElseThrow(() -> new IllegalArgumentException("Order not found"));
-
+                .orElseThrow(() -> new OrderNotFoundException(orderId));
         order.updateStatus(nextStatus);
-
         orderRepository.updateWithVersion(order, expectedVersion);
     }
 
+    // The actual payment processing logic runs inside a @Transactional boundary.
+    // Called from AsyncOrderProcessor which wraps it with @Async + @Retryable.
+    @Transactional
+    public void processOrderPayment(String orderId) {
+        Order order = orderRepository.findById(orderId)
+                .orElseThrow(() -> new OrderNotFoundException(orderId));
+
+        if (order.getStatus() != OrderStatus.PAYMENT_PENDING) {
+            return;
+        }
+
+        PaymentResult result = paymentService.processPayment(order.getOrderId(), order.totalAmount());
+
+        switch (result) {
+            case SUCCESS -> {
+                advanceOrderWithVersion(order.getOrderId(), OrderStatus.PAID, order.getVersion());
+                Order paidOrder = orderRepository.findById(order.getOrderId()).orElseThrow();
+                advanceOrderWithVersion(paidOrder.getOrderId(), OrderStatus.SHIPPED, paidOrder.getVersion());
+            }
+            case FAILED -> advanceOrderWithVersion(order.getOrderId(), OrderStatus.FAILED, order.getVersion());
+            case RETRYABLE_FAILURE -> throw new RuntimeException("Retryable payment failure for order " + orderId);
+        }
+    }
+
     public void startPaymentProcessing(String orderId) {
-        executor.submit(
-                new OrderProcessingTask(
-                        orderId,
-                        this,
-                        orderRepository,
-                        paymentService,
-                        transactionManager
-                )
-        );
+        asyncOrderProcessor.processAsync(orderId);
     }
 
     public Optional<Order> getOrder(String orderId) {
         return orderRepository.findById(orderId);
+    }
+
+    public List<Order> getOrdersByCustomer(String customerId) {
+        return orderRepository.findByCustomerId(customerId);
     }
 }

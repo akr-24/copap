@@ -1,75 +1,42 @@
 package com.copap.auth;
 
-import java.sql.Connection;
-import java.sql.PreparedStatement;
-import java.sql.ResultSet;
+import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.stereotype.Repository;
+
 import java.sql.Timestamp;
 import java.time.Instant;
 import java.util.Optional;
 
+@Repository
 public class JdbcAuthTokenRepository implements AuthTokenRepository {
 
-    private final Connection connection;
+    private final JdbcTemplate jdbcTemplate;
 
-    public JdbcAuthTokenRepository(Connection connection) {
-        this.connection = connection;
+    public JdbcAuthTokenRepository(JdbcTemplate jdbcTemplate) {
+        this.jdbcTemplate = jdbcTemplate;
     }
 
     @Override
     public void save(AuthToken token) {
-
-        try {
-            PreparedStatement stmt = connection.prepareStatement(
-                    """
-                    INSERT INTO auth_tokens (token, user_id, expires_at)
-                    VALUES (?, ?, ?)
-                    """
-            );
-
-            stmt.setString(1, token.getToken());
-            stmt.setString(2, token.getUserId());
-            stmt.setTimestamp(
-                    3,
-                    java.sql.Timestamp.from(token.getExpiresAt())
-            );
-
-            stmt.executeUpdate();
-
-        } catch (Exception e) {
-            throw new RuntimeException(e);
-        }
+        jdbcTemplate.update(
+                "INSERT INTO auth_tokens (token, user_id, expires_at) VALUES (?, ?, ?)",
+                token.getToken(),
+                token.getUserId(),
+                Timestamp.from(token.getExpiresAt())
+        );
     }
 
     @Override
     public Optional<AuthToken> findByToken(String tokenValue) {
-
-        try {
-            PreparedStatement stmt = connection.prepareStatement(
-                    """
-                    SELECT token, user_id, expires_at
-                    FROM auth_tokens
-                    WHERE token = ?
-                    """
-            );
-
-            stmt.setString(1, tokenValue);
-            ResultSet rs = stmt.executeQuery();
-
-            if (!rs.next()) return Optional.empty();
-
-            Timestamp expiresAtTimestamp = rs.getTimestamp("expires_at");
-            Instant expiresAt = expiresAtTimestamp.toInstant();
-
-            return Optional.of(
-                    new AuthToken(
-                            rs.getString("token"),
-                            rs.getString("user_id"),
-                            expiresAt
-                    )
-            );
-
-        } catch (Exception e) {
-            throw new RuntimeException(e);
-        }
+        var results = jdbcTemplate.query(
+                "SELECT token, user_id, expires_at FROM auth_tokens WHERE token = ?",
+                (rs, rowNum) -> new AuthToken(
+                        rs.getString("token"),
+                        rs.getString("user_id"),
+                        rs.getTimestamp("expires_at").toInstant()
+                ),
+                tokenValue
+        );
+        return results.stream().findFirst();
     }
 }

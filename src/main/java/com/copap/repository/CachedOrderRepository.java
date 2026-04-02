@@ -2,19 +2,22 @@ package com.copap.repository;
 
 import com.copap.model.Order;
 import com.copap.model.VersionedOrder;
+import org.springframework.context.annotation.Primary;
+import org.springframework.stereotype.Service;
 
 import java.util.List;
 import java.util.Optional;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
 
+@Service
+@Primary
 public class CachedOrderRepository implements OrderRepository {
 
-    private final OrderRepository delegate;
-    private final ConcurrentMap<String, VersionedOrder> cache =
-            new ConcurrentHashMap<>();
+    private final JdbcOrderRepository delegate;
+    private final ConcurrentMap<String, VersionedOrder> cache = new ConcurrentHashMap<>();
 
-    public CachedOrderRepository(OrderRepository delegate) {
+    public CachedOrderRepository(JdbcOrderRepository delegate) {
         this.delegate = delegate;
     }
 
@@ -23,9 +26,7 @@ public class CachedOrderRepository implements OrderRepository {
         delegate.save(order);
 
         cache.compute(order.getOrderId(), (id, existing) -> {
-            if (existing == null) {
-                return new VersionedOrder(order);
-            }
+            if (existing == null) return new VersionedOrder(order);
             existing.incrementVersion();
             return existing;
         });
@@ -33,24 +34,14 @@ public class CachedOrderRepository implements OrderRepository {
 
     @Override
     public void updateWithVersion(Order order, long expectedVersion) {
+        // Fix for Bug #7: delegate must be called first so the DB optimistic lock
+        // check runs. Only update the cache after the DB write succeeds.
+        delegate.updateWithVersion(order, expectedVersion);
 
         cache.compute(order.getOrderId(), (id, existing) -> {
-
-            if (existing == null) {
-                throw new IllegalStateException("Order not in cache");
+            if (existing != null) {
+                existing.incrementVersion();
             }
-
-            long currentVersion = existing.getVersion();
-
-            if (currentVersion != expectedVersion) {
-                throw new OptimisticLockException(
-                        "Stale update. Expected version " +
-                                expectedVersion + " but found " + currentVersion
-                );
-            }
-
-            // version matches → safe update
-            existing.incrementVersion();
             return existing;
         });
     }
@@ -63,9 +54,7 @@ public class CachedOrderRepository implements OrderRepository {
         }
 
         Optional<Order> fromRepo = delegate.findById(orderId);
-        fromRepo.ifPresent(order ->
-                cache.put(orderId, new VersionedOrder(order)));
-
+        fromRepo.ifPresent(order -> cache.put(orderId, new VersionedOrder(order)));
         return fromRepo;
     }
 
@@ -76,15 +65,12 @@ public class CachedOrderRepository implements OrderRepository {
 
     @Override
     public List<Order> findByCustomerId(String customerId) {
-        // Delegate to underlying repository for customer-based queries
         return delegate.findByCustomerId(customerId);
     }
 
-    public long getVersion(String orderId) {
+    public long getCachedVersion(String orderId) {
         VersionedOrder vo = cache.get(orderId);
-        if (vo == null) {
-            throw new IllegalStateException("Order not found in cache");
-        }
+        if (vo == null) throw new IllegalStateException("Order not found in cache: " + orderId);
         return vo.getVersion();
     }
 }

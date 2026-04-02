@@ -1,0 +1,16 @@
+# Maven build output
+target/
+
+# IntelliJ IDEA
+.idea/
+out/
+lib
+*.iml
+
+# Local dev credentials — never commit
+application-local.yml
+.env
+.env.local
+
+# Uploaded product images — runtime data, not source
+uploads/

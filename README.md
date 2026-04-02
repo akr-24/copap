@@ -1,213 +1,204 @@
 # COPAP Backend
 
-**Concurrent Order Processing and Analytics Platform** - A high-performance e-commerce backend built with raw Java demonstrating advanced concurrency patterns.
+**Concurrent Order Processing and Analytics Platform** — A Spring Boot e-commerce backend demonstrating advanced concurrency patterns, idempotent order processing, and real-time analytics.
 
 > 🔗 **Frontend Repository:** [copap-ui](https://github.com/akr-24/copap-ui)
 
+---
+
 ## 🚀 Features
 
-- **Order Processing Engine** - Async order processing with state machine
-- **Idempotency** - Duplicate request handling for reliable order creation
-- **Optimistic Locking** - Safe concurrent order updates
-- **Real-time Analytics** - Sliding window analytics for order metrics
-- **JWT Authentication** - Secure token-based authentication
-- **Role-based Access Control** - Admin and User roles
-- **Payment Processing** - Mock payment gateway with retry support
-- **Dead Letter Queue** - Failed task handling for recovery
+- **Order Processing Engine** — Async order processing with `@Async` + Spring Retry and a state machine
+- **Idempotency** — Duplicate request handling for reliable order creation (`Idempotency-Key` header)
+- **Optimistic Locking** — Version-based concurrency control on orders
+- **Real-time Analytics** — Sliding window analytics for live order/revenue metrics
+- **Token Authentication** — Opaque UUID tokens stored in DB, validated per request
+- **BCrypt Passwords** — With graceful SHA-256 → BCrypt migration path for existing users
+- **Role-based Access Control** — `USER` and `ADMIN` roles enforced via Spring Security `@PreAuthorize`
+- **Payment Processing** — Mock payment gateway with retry support and DB-backed dead letter queue
+- **Admin Panel API** — Dashboard, analytics, product/order/user management with image uploads
+- **Database Migrations** — Flyway versioned migrations; schema managed automatically on startup
+
+---
 
 ## 🛠️ Tech Stack
 
-- **Language:** Java 17+
-- **Server:** JDK HttpServer (no framework)
-- **Database:** PostgreSQL
-- **Connection Pool:** HikariCP
-- **JSON:** Gson
+| Concern | Technology |
+|---------|-----------|
+| Language | Java 21 |
+| Framework | Spring Boot 3.3 |
+| Web | Spring MVC (`@RestController`) |
+| Security | Spring Security 6 (`TokenAuthenticationFilter`) |
+| Database | PostgreSQL 18 |
+| JDBC | Spring `JdbcTemplate` |
+| Connection Pool | HikariCP (auto-configured by Spring Boot) |
+| Migrations | Flyway |
+| Async / Retry | Spring `@Async` + Spring Retry (`@Retryable`) |
+| JSON | Jackson (via `spring-boot-starter-web`) |
+| Build | Maven 3.9+ |
+
+---
 
 ## 📋 Prerequisites
 
-- Java 17 or later
-- PostgreSQL 12+
-- Maven (optional, for dependency management)
+- Java 21+
+- Maven 3.9+
+- PostgreSQL (any recent version)
+
+---
 
 ## 🗄️ Database Setup
 
-1. Create the database:
+Just create an empty database — Flyway runs all migrations automatically on first startup:
+
 ```sql
 CREATE DATABASE copap;
 ```
 
-2. Run the schema:
-```sql
--- Users table
-CREATE TABLE users (
-    user_id VARCHAR(36) PRIMARY KEY,
-    username VARCHAR(50) UNIQUE NOT NULL,
-    password_hash VARCHAR(255) NOT NULL,
-    email VARCHAR(255),
-    role VARCHAR(20) DEFAULT 'USER'
-);
+That's it. Flyway creates all tables (`users`, `products`, `orders`, `addresses`, `auth_tokens`, `payments`, `idempotency_records`, `order_items`, `dead_letter_queue`) on first run.
 
--- Products table
-CREATE TABLE products (
-    product_id VARCHAR(36) PRIMARY KEY,
-    name VARCHAR(255) NOT NULL,
-    price DECIMAL(10,2) NOT NULL,
-    active BOOLEAN DEFAULT true
-);
+---
 
--- Orders table
-CREATE TABLE orders (
-    order_id VARCHAR(36) PRIMARY KEY,
-    customer_id VARCHAR(36) REFERENCES users(user_id),
-    product_ids TEXT,
-    status VARCHAR(20) NOT NULL,
-    total_amount DECIMAL(10,2),
-    version BIGINT DEFAULT 0,
-    shipping_address_id VARCHAR(36),
-    created_at TIMESTAMP DEFAULT NOW()
-);
+## ⚙️ Local Configuration
 
--- Addresses table
-CREATE TABLE addresses (
-    address_id VARCHAR(36) PRIMARY KEY,
-    user_id VARCHAR(36) NOT NULL REFERENCES users(user_id),
-    label VARCHAR(50) DEFAULT 'Home',
-    full_name VARCHAR(255) NOT NULL,
-    phone VARCHAR(20),
-    street VARCHAR(500) NOT NULL,
-    city VARCHAR(100) NOT NULL,
-    state VARCHAR(100),
-    postal_code VARCHAR(20) NOT NULL,
-    country VARCHAR(100) DEFAULT 'India',
-    is_default BOOLEAN DEFAULT false,
-    created_at TIMESTAMP DEFAULT NOW()
-);
-
--- Idempotency keys table
-CREATE TABLE idempotency_keys (
-    idempotency_key VARCHAR(255) PRIMARY KEY,
-    request_hash VARCHAR(255),
-    order_id VARCHAR(36),
-    created_at TIMESTAMP DEFAULT NOW()
-);
-
--- Auth tokens table
-CREATE TABLE auth_tokens (
-    token VARCHAR(255) PRIMARY KEY,
-    user_id VARCHAR(36) REFERENCES users(user_id),
-    expires_at TIMESTAMP NOT NULL
-);
-
--- Sample products
-INSERT INTO products (product_id, name, price) VALUES
-    ('P1', 'Laptop', 50000),
-    ('P2', 'Smartphone', 25000),
-    ('P3', 'Headphones', 5000);
-```
-
-## ⚙️ Configuration
-
-Update database credentials in `MainApplication.java`:
-```java
-config.setJdbcUrl("jdbc:postgresql://localhost:5432/copap");
-config.setUsername("postgres");
-config.setPassword("your_password");
-```
-
-## 🏃 Running the Server
+Copy the example file and fill in your local credentials:
 
 ```bash
-# Navigate to backend directory
-cd copap-backend
-
-# Compile
-javac -cp "lib/*" -d out $(find src -name "*.java")
-
-# Run (Linux/Mac)
-java -cp "out:lib/*" com.copap.MainApplication
-
-# Run (Windows)
-java -cp "out;lib/*" com.copap.MainApplication
+cp application-local.yml.example application-local.yml
 ```
+
+Edit `application-local.yml`:
+
+```yaml
+spring:
+  datasource:
+    url: jdbc:postgresql://localhost:5432/copap
+    username: postgres
+    password: YOUR_PASSWORD
+
+app:
+  cors:
+    allowed-origins: http://localhost:5173
+  image-base-url: http://localhost:8080
+  upload-dir: ./uploads
+```
+
+> `application-local.yml` is gitignored and never committed.  
+> See `.env.example` for the full list of environment variables used in production.
+
+---
+
+## 🏃 Running Locally
+
+```bash
+cd copap-backend
+mvn spring-boot:run
+```
+
+The `local` Spring profile is activated automatically by the Maven plugin, so `application-local.yml` is picked up without any extra flags.
 
 Server starts at `http://localhost:8080`
 
+---
+
 ## 📡 API Endpoints
 
-### Public Endpoints
+### Public
 | Method | Endpoint | Description |
 |--------|----------|-------------|
-| POST | `/login` | User login |
-| POST | `/register` | User registration |
-| GET | `/products` | List all products |
-| GET | `/images/{name}` | Get product image |
+| POST | `/login` | Login — returns `{ token }` |
+| POST | `/register` | Register — returns `{ token }` |
+| GET | `/products` | List active products |
+| GET | `/images/{filename}` | Serve product image |
 
-### Protected Endpoints (Require Auth Token)
+### Protected (requires `Authorization: Bearer <token>`)
 | Method | Endpoint | Description |
 |--------|----------|-------------|
-| GET | `/profile` | Get user profile |
-| GET | `/orders` | Get user's orders |
-| POST | `/orders` | Create order (requires Idempotency-Key header) |
-| GET | `/orders/{id}` | Get order details |
-| GET | `/addresses` | Get user's addresses |
+| GET | `/profile` | Current user info (includes `role`) |
+| GET | `/orders` | User's order history |
+| POST | `/orders` | Create order (requires `Idempotency-Key` header) |
+| GET | `/orders/{id}` | Order details (includes `productIds`) |
+| GET | `/addresses` | User's addresses |
 | POST | `/addresses` | Create address |
 | PUT | `/addresses/{id}` | Update address |
 | DELETE | `/addresses/{id}` | Delete address |
+| POST | `/addresses/{id}/default` | Set default address |
 
-### Admin Endpoints (Require ADMIN role)
+### Admin (requires `ADMIN` role)
 | Method | Endpoint | Description |
 |--------|----------|-------------|
-| GET | `/admin/dashboard` | Dashboard statistics |
-| GET | `/admin/analytics` | Real-time analytics |
-| GET | `/admin/products` | All products |
+| GET | `/admin/dashboard` | Stats: orders, revenue, users, products |
+| GET | `/admin/analytics` | Sliding window order count and revenue |
+| GET | `/admin/products` | All products (includes `imageUrl`) |
 | POST | `/admin/products` | Create product |
-| PUT | `/admin/products/{id}` | Update product |
-| DELETE | `/admin/products/{id}` | Deactivate product |
+| PUT | `/admin/products/{id}` | Update product name / price / active |
+| DELETE | `/admin/products/{id}` | Soft-deactivate product |
+| POST | `/admin/products/{id}/image` | Upload product image (multipart, max 10 MB) |
 | GET | `/admin/orders` | All orders |
 | GET | `/admin/users` | All users |
+| POST | `/admin/recovery/payments` | Re-queue stale PAYMENT_PENDING orders |
+
+---
 
 ## 🔐 Authentication
 
-Include the auth token in requests:
+Include the token in every protected request:
+
 ```
 Authorization: Bearer <token>
 ```
 
+Tokens expire after **1 hour**. A `401` response means the token is missing or expired — the frontend auto-logs out when this happens.
+
+To promote a user to admin:
+
+```sql
+UPDATE users SET role = 'ADMIN' WHERE username = 'your_username';
+```
+
+Then log out and back in.
+
+---
+
 ## 📊 Order State Machine
 
 ```
-NEW → VALIDATED → INVENTORY_RESERVED → PAYMENT_PENDING → PAID → SHIPPED
-  ↓       ↓              ↓                   ↓
-FAILED  FAILED        FAILED              FAILED
+NEW → PAYMENT_PENDING → PAID → SHIPPED
+ ↓          ↓           ↓
+FAILED    FAILED      (terminal)
 ```
 
-## 🏗️ Architecture Highlights
+Transitions are enforced by `OrderStateMachine`. Async payment processing uses Spring `@Async` + `@Retryable` (3 attempts, exponential backoff). Orders that exhaust all retries go to the `dead_letter_queue` table.
 
-- **No Framework** - Pure Java implementation for learning
-- **Async Processing** - Custom `FailureAwareExecutor` for background tasks
-- **State Machine** - Type-safe order state transitions
-- **Optimistic Locking** - Version-based concurrency control
-- **Idempotency** - Request deduplication for reliability
-- **Sliding Window Analytics** - Real-time metrics with time-bucketed data
+---
 
-## 📁 Project Structure
+## 🏗️ Architecture
 
 ```
 copap-backend/
 ├── src/main/java/com/copap/
-│   ├── api/              # HTTP handlers (controllers)
-│   ├── auth/             # Authentication & authorization
-│   ├── analytics/        # Real-time analytics
-│   ├── engine/           # Order processing engine
-│   ├── model/            # Domain models
-│   ├── payment/          # Payment processing
-│   ├── repository/       # Data access layer
-│   └── MainApplication.java
-├── lib/                  # Dependencies (JARs)
-└── static/images/        # Product images
+│   ├── CopapApplication.java       # Entry point (@SpringBootApplication)
+│   ├── api/                        # @RestController classes
+│   │   ├── exception/              # GlobalExceptionHandler + custom exceptions
+│   │   └── dto/                    # Request/response DTOs
+│   ├── auth/                       # User, AuthToken, AuthService, JdbcUserRepository
+│   ├── analytics/                  # SlidingWindowAnalytics, AnalyticsService (@EventListener)
+│   ├── config/                     # SecurityConfig, WebConfig (CORS), AsyncConfig
+│   ├── events/                     # OrderPlacedEvent (ApplicationEvent)
+│   ├── model/                      # Order, OrderStatus, OrderStateMachine, etc.
+│   ├── payment/                    # PaymentService, MockPaymentGateway, JdbcPaymentRepository
+│   ├── product/                    # Product, ProductRepository, JdbcProductRepository
+│   ├── repository/                 # OrderRepository, CachedOrderRepository, JdbcOrderRepository
+│   ├── security/                   # TokenAuthenticationFilter
+│   └── service/                    # OrderService, AsyncOrderProcessor, DeadLetterQueueService
+└── src/main/resources/
+    ├── application.yml             # Base config (reads from env vars)
+    ├── application-local.yml       # Local overrides (gitignored)
+    └── db/migration/               # Flyway SQL scripts V1–V5
 ```
+
+---
 
 ## 📝 License
 
 MIT License
-

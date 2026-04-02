@@ -1,0 +1,23 @@
+# ============================================================
+# LOCAL DEVELOPMENT OVERRIDES — TEMPLATE
+# Copy this file to application-local.yml and fill in values.
+# application-local.yml is gitignored and never committed.
+# ============================================================
+
+spring:
+  datasource:
+    url: jdbc:postgresql://localhost:5432/copap   # your local DB URL
+    username: postgres                             # your local DB user
+    password: YOUR_LOCAL_DB_PASSWORD               # your local DB password
+
+  flyway:
+    # Set to true ONLY when migrating from the old bare-JDK app.
+    # For a fresh database leave as false (tables created by V1 migration).
+    baseline-on-migrate: false
+    baseline-version: 1
+
+app:
+  cors:
+    allowed-origins: http://localhost:5173
+  image-base-url: http://localhost:8080
+  upload-dir: ./uploads                           # local filesystem upload dir

@@ -1,12 +1,18 @@
 package com.copap.api;
 
 import com.copap.payment.PaymentRecoveryService;
-import com.sun.net.httpserver.HttpExchange;
-import com.sun.net.httpserver.HttpHandler;
+import org.springframework.http.ResponseEntity;
+import org.springframework.security.access.prepost.PreAuthorize;
+import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RestController;
 
-import java.io.IOException;
+import java.util.Map;
 
-public class RecoveryController implements HttpHandler {
+@RestController
+@RequestMapping("/admin/recovery")
+@PreAuthorize("hasRole('ADMIN')")
+public class RecoveryController {
 
     private final PaymentRecoveryService recoveryService;
 
@@ -14,14 +20,9 @@ public class RecoveryController implements HttpHandler {
         this.recoveryService = recoveryService;
     }
 
-    @Override
-    public void handle(HttpExchange exchange) throws IOException {
-        if (!exchange.getRequestMethod().equalsIgnoreCase("POST")) {
-            exchange.sendResponseHeaders(405, -1);
-            return;
-        }
-
+    @PostMapping("/payments")
+    public ResponseEntity<Map<String, String>> recoverPayments() {
         recoveryService.recoverPayments();
-        exchange.sendResponseHeaders(200, -1);
+        return ResponseEntity.ok(Map.of("message", "Payment recovery triggered"));
     }
 }

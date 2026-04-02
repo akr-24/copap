@@ -1,407 +1,233 @@
 package com.copap.api;
 
-import com.copap.analytics.SlidingWindowAnalytics;
-import com.copap.auth.AuthTokenRepository;
-import com.copap.auth.JdbcUserRepository;
-import com.copap.auth.User;
-import com.copap.product.Product;
-import com.copap.product.ProductRepository;
+import com.copap.analytics.AnalyticsService;
+import com.copap.product.JdbcProductRepository;
 import com.copap.repository.OrderRepository;
-import com.fasterxml.jackson.databind.ObjectMapper;
-import com.sun.net.httpserver.HttpExchange;
-import com.sun.net.httpserver.HttpHandler;
+import jakarta.annotation.PostConstruct;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.http.MediaType;
+import org.springframework.http.ResponseEntity;
+import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.security.access.prepost.PreAuthorize;
+import org.springframework.web.bind.annotation.*;
+import org.springframework.web.multipart.MultipartFile;
 
 import java.io.IOException;
-import java.nio.charset.StandardCharsets;
-import java.sql.Connection;
-import java.sql.PreparedStatement;
-import java.sql.ResultSet;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.Paths;
+import java.nio.file.StandardCopyOption;
+import java.time.Instant;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
 import java.util.UUID;
 
-public class AdminController implements HttpHandler {
+@RestController
+@RequestMapping("/admin")
+@PreAuthorize("hasRole('ADMIN')")
+public class AdminController {
 
-    private static final ObjectMapper mapper = new ObjectMapper();
-    private final AuthTokenRepository authTokenRepository;
-    private final JdbcUserRepository userRepository;
-    private final ProductRepository productRepository;
+    private final JdbcTemplate jdbcTemplate;
+    private final JdbcProductRepository productRepository;
     private final OrderRepository orderRepository;
-    private final SlidingWindowAnalytics analytics;
-    private final Connection connection;
+    private final AnalyticsService analyticsService;
 
-    public AdminController(AuthTokenRepository authTokenRepository,
-                          JdbcUserRepository userRepository,
-                          ProductRepository productRepository,
-                          OrderRepository orderRepository,
-                          SlidingWindowAnalytics analytics,
-                          Connection connection) {
-        this.authTokenRepository = authTokenRepository;
-        this.userRepository = userRepository;
+    @Value("${app.upload-dir:./uploads}")
+    private String uploadDir;
+
+    @Value("${app.image-base-url:http://localhost:8080}")
+    private String imageBaseUrl;
+
+    public AdminController(JdbcTemplate jdbcTemplate,
+                           JdbcProductRepository productRepository,
+                           OrderRepository orderRepository,
+                           AnalyticsService analyticsService) {
+        this.jdbcTemplate = jdbcTemplate;
         this.productRepository = productRepository;
         this.orderRepository = orderRepository;
-        this.analytics = analytics;
-        this.connection = connection;
+        this.analyticsService = analyticsService;
     }
 
-    @Override
-    public void handle(HttpExchange exchange) throws IOException {
-        String method = exchange.getRequestMethod();
-        String path = exchange.getRequestURI().getPath();
-        
-        System.out.println("AdminController hit - Method: " + method + ", Path: " + path);
-
+    @PostConstruct
+    public void init() {
         try {
-            // Verify admin access
-            String authHeader = exchange.getRequestHeaders().getFirst("Authorization");
-            if (authHeader == null || !authHeader.startsWith("Bearer ")) {
-                sendError(exchange, 401, "Unauthorized");
-                return;
-            }
-
-            String token = authHeader.substring(7);
-            var authToken = authTokenRepository.findByToken(token);
-            if (authToken.isEmpty()) {
-                sendError(exchange, 401, "Unauthorized");
-                return;
-            }
-
-            String userId = authToken.get().getUserId();
-            var userOpt = userRepository.findById(userId);
-            if (userOpt.isEmpty() || !isAdmin(userId)) {
-                sendError(exchange, 403, "Admin access required");
-                return;
-            }
-
-            // Route handling
-            if (path.equals("/admin/analytics") && method.equalsIgnoreCase("GET")) {
-                handleGetAnalytics(exchange);
-            } else if (path.equals("/admin/dashboard") && method.equalsIgnoreCase("GET")) {
-                handleGetDashboard(exchange);
-            } else if (path.equals("/admin/products") && method.equalsIgnoreCase("GET")) {
-                handleGetProducts(exchange);
-            } else if (path.equals("/admin/products") && method.equalsIgnoreCase("POST")) {
-                handleCreateProduct(exchange);
-            } else if (path.startsWith("/admin/products/") && method.equalsIgnoreCase("PUT")) {
-                handleUpdateProduct(exchange);
-            } else if (path.startsWith("/admin/products/") && method.equalsIgnoreCase("DELETE")) {
-                handleDeleteProduct(exchange);
-            } else if (path.equals("/admin/orders") && method.equalsIgnoreCase("GET")) {
-                handleGetAllOrders(exchange);
-            } else if (path.equals("/admin/users") && method.equalsIgnoreCase("GET")) {
-                handleGetUsers(exchange);
-            } else {
-                sendError(exchange, 404, "Not found");
-            }
-
-        } catch (Exception e) {
-            e.printStackTrace();
-            sendError(exchange, 500, e.getMessage());
-        } finally {
-            exchange.close();
+            Path imagesDir = Paths.get(uploadDir).toAbsolutePath().resolve("images");
+            Files.createDirectories(imagesDir);
+            System.out.println("[AdminController] Upload directory ready: " + imagesDir);
+        } catch (IOException e) {
+            System.err.println("[AdminController] WARNING: Could not create upload directory: " + e.getMessage());
         }
     }
 
-    private boolean isAdmin(String userId) {
-        try {
-            PreparedStatement stmt = connection.prepareStatement(
-                "SELECT role FROM users WHERE user_id = ?"
-            );
-            stmt.setString(1, userId);
-            ResultSet rs = stmt.executeQuery();
-            if (rs.next()) {
-                String role = rs.getString("role");
-                return "ADMIN".equalsIgnoreCase(role);
-            }
-            return false;
-        } catch (Exception e) {
-            return false;
-        }
+    private String imageUrlFor(com.copap.product.Product p) {
+        String filename = p.getImageFilename() != null
+                ? p.getImageFilename()
+                : p.getProductId().toLowerCase() + ".jpg";
+        return imageBaseUrl + "/images/" + filename;
     }
 
-    private void handleGetAnalytics(HttpExchange exchange) throws IOException {
-        long orderCount = analytics.getOrderCount();
-        double revenue = analytics.getRevenue();
-
-        String json = String.format("""
-            {
-                "windowOrderCount": %d,
-                "windowRevenue": %.2f,
-                "timestamp": "%s"
-            }
-            """, orderCount, revenue, java.time.Instant.now());
-
-        sendJson(exchange, 200, json);
+    @GetMapping("/analytics")
+    public ResponseEntity<Map<String, Object>> getAnalytics() {
+        return ResponseEntity.ok(Map.of(
+                "windowOrderCount", analyticsService.getOrderCount(),
+                "windowRevenue",    analyticsService.getRevenue(),
+                "timestamp",        Instant.now().toString()
+        ));
     }
 
-    private void handleGetDashboard(HttpExchange exchange) throws IOException {
-        try {
-            // Get total orders
-            PreparedStatement orderStmt = connection.prepareStatement("SELECT COUNT(*) as total FROM orders");
-            ResultSet orderRs = orderStmt.executeQuery();
-            long totalOrders = orderRs.next() ? orderRs.getLong("total") : 0;
+    @GetMapping("/dashboard")
+    public ResponseEntity<Map<String, Object>> getDashboard() {
+        long totalOrders = jdbcTemplate.queryForObject(
+                "SELECT COUNT(*) FROM orders", Long.class);
+        double totalRevenue = jdbcTemplate.queryForObject(
+                "SELECT COALESCE(SUM(total_amount), 0) FROM orders WHERE status = 'PAID'", Double.class);
+        long totalUsers = jdbcTemplate.queryForObject(
+                "SELECT COUNT(*) FROM users", Long.class);
+        long totalProducts = jdbcTemplate.queryForObject(
+                "SELECT COUNT(*) FROM products", Long.class);
 
-            // Get total revenue
-            PreparedStatement revenueStmt = connection.prepareStatement(
-                "SELECT COALESCE(SUM(total_amount), 0) as total FROM orders WHERE status = 'PAID'"
-            );
-            ResultSet revenueRs = revenueStmt.executeQuery();
-            double totalRevenue = revenueRs.next() ? revenueRs.getDouble("total") : 0;
-
-            // Get total users
-            PreparedStatement userStmt = connection.prepareStatement("SELECT COUNT(*) as total FROM users");
-            ResultSet userRs = userStmt.executeQuery();
-            long totalUsers = userRs.next() ? userRs.getLong("total") : 0;
-
-            // Get total products
-            PreparedStatement productStmt = connection.prepareStatement("SELECT COUNT(*) as total FROM products");
-            ResultSet productRs = productStmt.executeQuery();
-            long totalProducts = productRs.next() ? productRs.getLong("total") : 0;
-
-            // Get orders by status
-            PreparedStatement statusStmt = connection.prepareStatement(
-                "SELECT status, COUNT(*) as count FROM orders GROUP BY status"
-            );
-            ResultSet statusRs = statusStmt.executeQuery();
-            StringBuilder statusJson = new StringBuilder();
-            while (statusRs.next()) {
-                if (statusJson.length() > 0) statusJson.append(",");
-                statusJson.append(String.format("\"%s\": %d", 
-                    statusRs.getString("status"), 
-                    statusRs.getLong("count")));
-            }
-
-            // Get recent orders
-            PreparedStatement recentStmt = connection.prepareStatement(
-                "SELECT order_id, status, total_amount, created_at FROM orders ORDER BY created_at DESC LIMIT 10"
-            );
-            ResultSet recentRs = recentStmt.executeQuery();
-            StringBuilder recentJson = new StringBuilder("[");
-            boolean first = true;
-            while (recentRs.next()) {
-                if (!first) recentJson.append(",");
-                first = false;
-                recentJson.append(String.format("""
-                    {"orderId": "%s", "status": "%s", "totalAmount": %.2f, "createdAt": "%s"}
-                    """,
-                    recentRs.getString("order_id"),
-                    recentRs.getString("status"),
-                    recentRs.getDouble("total_amount"),
-                    recentRs.getTimestamp("created_at")
-                ));
-            }
-            recentJson.append("]");
-
-            String json = String.format("""
-                {
-                    "totalOrders": %d,
-                    "totalRevenue": %.2f,
-                    "totalUsers": %d,
-                    "totalProducts": %d,
-                    "ordersByStatus": {%s},
-                    "recentOrders": %s,
-                    "windowAnalytics": {
-                        "orderCount": %d,
-                        "revenue": %.2f
-                    }
+        Map<String, Long> statusMap = new HashMap<>();
+        jdbcTemplate.query(
+                "SELECT status, COUNT(*) as count FROM orders GROUP BY status",
+                (rs) -> {
+                    statusMap.put(rs.getString("status"), rs.getLong("count"));
                 }
-                """, 
-                totalOrders, totalRevenue, totalUsers, totalProducts,
-                statusJson.toString(), recentJson.toString(),
-                analytics.getOrderCount(), analytics.getRevenue()
-            );
+        );
 
-            sendJson(exchange, 200, json);
+        var recentOrders = jdbcTemplate.query(
+                "SELECT order_id, status, total_amount, created_at FROM orders ORDER BY created_at DESC LIMIT 10",
+                (rs, rowNum) -> Map.<String, Object>of(
+                        "orderId",     rs.getString("order_id"),
+                        "status",      rs.getString("status"),
+                        "totalAmount", rs.getDouble("total_amount"),
+                        "createdAt",   rs.getTimestamp("created_at").toString()
+                )
+        );
 
-        } catch (Exception e) {
-            e.printStackTrace();
-            sendError(exchange, 500, e.getMessage());
+        return ResponseEntity.ok(Map.of(
+                "totalOrders",    totalOrders,
+                "totalRevenue",   totalRevenue,
+                "totalUsers",     totalUsers,
+                "totalProducts",  totalProducts,
+                "ordersByStatus", statusMap,
+                "recentOrders",   recentOrders,
+                "windowAnalytics", Map.of(
+                        "orderCount", analyticsService.getOrderCount(),
+                        "revenue",    analyticsService.getRevenue()
+                )
+        ));
+    }
+
+    @GetMapping("/products")
+    public ResponseEntity<List<Map<String, Object>>> getProducts() {
+        var products = productRepository.findAll().stream()
+                .map(p -> {
+                    Map<String, Object> m = new HashMap<>();
+                    m.put("productId", p.getProductId());
+                    m.put("name",      p.getName());
+                    m.put("price",     p.getPrice());
+                    m.put("active",    p.isActive());
+                    m.put("imageUrl",  imageUrlFor(p));
+                    return m;
+                })
+                .toList();
+        return ResponseEntity.ok(products);
+    }
+
+    @PostMapping("/products")
+    public ResponseEntity<Map<String, Object>> createProduct(@RequestBody Map<String, Object> body) {
+        String productId = UUID.randomUUID().toString().substring(0, 8).toUpperCase();
+        String name = (String) body.get("name");
+        double price = ((Number) body.get("price")).doubleValue();
+        productRepository.save(productId, name, price);
+
+        Map<String, Object> resp = new HashMap<>();
+        resp.put("productId", productId);
+        resp.put("name",      name);
+        resp.put("price",     price);
+        resp.put("active",    true);
+        resp.put("imageUrl",  imageBaseUrl + "/images/" + productId.toLowerCase() + ".jpg");
+        return ResponseEntity.status(201).body(resp);
+    }
+
+    @PutMapping("/products/{productId}")
+    public ResponseEntity<Map<String, Boolean>> updateProduct(
+            @PathVariable String productId,
+            @RequestBody Map<String, Object> body) {
+
+        String name    = (String) body.get("name");
+        Double price   = body.containsKey("price") ? ((Number) body.get("price")).doubleValue() : null;
+        Boolean active = (Boolean) body.get("active");
+        productRepository.update(productId, name, price, active);
+        return ResponseEntity.ok(Map.of("success", true));
+    }
+
+    @DeleteMapping("/products/{productId}")
+    public ResponseEntity<Map<String, Boolean>> deleteProduct(@PathVariable String productId) {
+        productRepository.softDelete(productId);
+        return ResponseEntity.ok(Map.of("success", true));
+    }
+
+    @PostMapping(value = "/products/{productId}/image", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
+    public ResponseEntity<Map<String, String>> uploadProductImage(
+            @PathVariable String productId,
+            @RequestParam("image") MultipartFile file) throws IOException {
+
+        if (file.isEmpty()) {
+            return ResponseEntity.badRequest()
+                    .body(Map.of("error", "No file provided"));
         }
+
+        String originalName = file.getOriginalFilename();
+        String ext = (originalName != null && originalName.contains("."))
+                ? originalName.substring(originalName.lastIndexOf('.')).toLowerCase()
+                : ".jpg";
+
+        String filename = productId.toLowerCase() + ext;
+
+        // Use absolute path to avoid working-directory resolution issues
+        Path imagesDir = Paths.get(uploadDir).toAbsolutePath().resolve("images");
+        Files.createDirectories(imagesDir);
+        Path dest = imagesDir.resolve(filename);
+
+        // Files.copy with InputStream is reliable regardless of temp file location
+        Files.copy(file.getInputStream(), dest, StandardCopyOption.REPLACE_EXISTING);
+
+        productRepository.updateImageFilename(productId, filename);
+
+        String imageUrl = imageBaseUrl + "/images/" + filename;
+        System.out.println("[AdminController] Image saved: " + dest + " → " + imageUrl);
+        return ResponseEntity.ok(Map.of("imageUrl", imageUrl, "filename", filename));
     }
 
-    private void handleGetProducts(HttpExchange exchange) throws IOException {
-        try {
-            var products = productRepository.findAll();
-            StringBuilder json = new StringBuilder("[");
-            boolean first = true;
-            for (var product : products) {
-                if (!first) json.append(",");
-                first = false;
-                json.append(String.format("""
-                    {"productId": "%s", "name": "%s", "price": %.2f, "active": %b}
-                    """,
-                    product.getProductId(),
-                    product.getName(),
-                    product.getPrice(),
-                    product.isActive()
-                ));
-            }
-            json.append("]");
-            sendJson(exchange, 200, json.toString());
-        } catch (Exception e) {
-            sendError(exchange, 500, e.getMessage());
-        }
+    @GetMapping("/orders")
+    public ResponseEntity<List<Map<String, Object>>> getAllOrders() {
+        var orders = jdbcTemplate.query(
+                "SELECT order_id, customer_id, status, total_amount, version, created_at FROM orders ORDER BY created_at DESC",
+                (rs, rowNum) -> Map.<String, Object>of(
+                        "orderId",     rs.getString("order_id"),
+                        "customerId",  rs.getString("customer_id"),
+                        "status",      rs.getString("status"),
+                        "totalAmount", rs.getDouble("total_amount"),
+                        "version",     rs.getLong("version"),
+                        "createdAt",   rs.getTimestamp("created_at").toString()
+                )
+        );
+        return ResponseEntity.ok(orders);
     }
 
-    private void handleCreateProduct(HttpExchange exchange) throws IOException {
-        try {
-            String body = new String(exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8);
-            var request = mapper.readTree(body);
-            
-            String productId = UUID.randomUUID().toString().substring(0, 8).toUpperCase();
-            String name = request.get("name").asText();
-            double price = request.get("price").asDouble();
-
-            PreparedStatement stmt = connection.prepareStatement(
-                "INSERT INTO products (product_id, name, price, active) VALUES (?, ?, ?, true)"
-            );
-            stmt.setString(1, productId);
-            stmt.setString(2, name);
-            stmt.setDouble(3, price);
-            stmt.executeUpdate();
-
-            String json = String.format("""
-                {"productId": "%s", "name": "%s", "price": %.2f, "active": true}
-                """, productId, name, price);
-
-            sendJson(exchange, 201, json);
-
-        } catch (Exception e) {
-            sendError(exchange, 500, e.getMessage());
-        }
-    }
-
-    private void handleUpdateProduct(HttpExchange exchange) throws IOException {
-        try {
-            String path = exchange.getRequestURI().getPath();
-            String productId = path.substring("/admin/products/".length());
-            
-            String body = new String(exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8);
-            var request = mapper.readTree(body);
-            
-            String name = request.has("name") ? request.get("name").asText() : null;
-            Double price = request.has("price") ? request.get("price").asDouble() : null;
-            Boolean active = request.has("active") ? request.get("active").asBoolean() : null;
-
-            StringBuilder sql = new StringBuilder("UPDATE products SET ");
-            boolean hasUpdate = false;
-            
-            if (name != null) {
-                sql.append("name = '").append(name).append("'");
-                hasUpdate = true;
-            }
-            if (price != null) {
-                if (hasUpdate) sql.append(", ");
-                sql.append("price = ").append(price);
-                hasUpdate = true;
-            }
-            if (active != null) {
-                if (hasUpdate) sql.append(", ");
-                sql.append("active = ").append(active);
-                hasUpdate = true;
-            }
-            
-            sql.append(" WHERE product_id = '").append(productId).append("'");
-
-            if (hasUpdate) {
-                connection.createStatement().executeUpdate(sql.toString());
-            }
-
-            sendJson(exchange, 200, "{\"success\": true}");
-
-        } catch (Exception e) {
-            sendError(exchange, 500, e.getMessage());
-        }
-    }
-
-    private void handleDeleteProduct(HttpExchange exchange) throws IOException {
-        try {
-            String path = exchange.getRequestURI().getPath();
-            String productId = path.substring("/admin/products/".length());
-
-            PreparedStatement stmt = connection.prepareStatement(
-                "UPDATE products SET active = false WHERE product_id = ?"
-            );
-            stmt.setString(1, productId);
-            stmt.executeUpdate();
-
-            sendJson(exchange, 200, "{\"success\": true}");
-
-        } catch (Exception e) {
-            sendError(exchange, 500, e.getMessage());
-        }
-    }
-
-    private void handleGetAllOrders(HttpExchange exchange) throws IOException {
-        try {
-            PreparedStatement stmt = connection.prepareStatement(
-                "SELECT order_id, customer_id, status, total_amount, version, created_at FROM orders ORDER BY created_at DESC"
-            );
-            ResultSet rs = stmt.executeQuery();
-
-            StringBuilder json = new StringBuilder("[");
-            boolean first = true;
-            while (rs.next()) {
-                if (!first) json.append(",");
-                first = false;
-                json.append(String.format("""
-                    {"orderId": "%s", "customerId": "%s", "status": "%s", "totalAmount": %.2f, "version": %d, "createdAt": "%s"}
-                    """,
-                    rs.getString("order_id"),
-                    rs.getString("customer_id"),
-                    rs.getString("status"),
-                    rs.getDouble("total_amount"),
-                    rs.getLong("version"),
-                    rs.getTimestamp("created_at")
-                ));
-            }
-            json.append("]");
-
-            sendJson(exchange, 200, json.toString());
-
-        } catch (Exception e) {
-            sendError(exchange, 500, e.getMessage());
-        }
-    }
-
-    private void handleGetUsers(HttpExchange exchange) throws IOException {
-        try {
-            PreparedStatement stmt = connection.prepareStatement(
-                "SELECT user_id, username, email, role FROM users"
-            );
-            ResultSet rs = stmt.executeQuery();
-
-            StringBuilder json = new StringBuilder("[");
-            boolean first = true;
-            while (rs.next()) {
-                if (!first) json.append(",");
-                first = false;
-                json.append(String.format("""
-                    {"userId": "%s", "username": "%s", "email": "%s", "role": "%s"}
-                    """,
-                    rs.getString("user_id"),
-                    rs.getString("username"),
-                    rs.getString("email") != null ? rs.getString("email") : "",
-                    rs.getString("role") != null ? rs.getString("role") : "USER"
-                ));
-            }
-            json.append("]");
-
-            sendJson(exchange, 200, json.toString());
-
-        } catch (Exception e) {
-            sendError(exchange, 500, e.getMessage());
-        }
-    }
-
-    private void sendJson(HttpExchange exchange, int status, String json) throws IOException {
-        byte[] bytes = json.getBytes(StandardCharsets.UTF_8);
-        exchange.getResponseHeaders().add("Content-Type", "application/json");
-        exchange.sendResponseHeaders(status, bytes.length);
-        exchange.getResponseBody().write(bytes);
-    }
-
-    private void sendError(HttpExchange exchange, int status, String message) throws IOException {
-        String json = String.format("{\"error\": \"%s\"}", message);
-        sendJson(exchange, status, json);
+    @GetMapping("/users")
+    public ResponseEntity<List<Map<String, Object>>> getUsers() {
+        var users = jdbcTemplate.query(
+                "SELECT user_id, username, email, role FROM users",
+                (rs, rowNum) -> Map.<String, Object>of(
+                        "userId",   rs.getString("user_id"),
+                        "username", rs.getString("username"),
+                        "email",    rs.getString("email") != null ? rs.getString("email") : "",
+                        "role",     rs.getString("role") != null ? rs.getString("role") : "USER"
+                )
+        );
+        return ResponseEntity.ok(users);
     }
 }
-

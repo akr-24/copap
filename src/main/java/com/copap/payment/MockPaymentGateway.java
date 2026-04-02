@@ -1,6 +1,9 @@
 package com.copap.payment;
 
+import org.springframework.stereotype.Service;
 import java.util.Random;
+
+@Service
 public class MockPaymentGateway implements PaymentGateway {
 
     private final Random random = new Random();

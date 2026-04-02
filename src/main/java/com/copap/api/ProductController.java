@@ -2,57 +2,42 @@ package com.copap.api;
 
 import com.copap.api.dto.ProductResponse;
 import com.copap.product.ProductRepository;
-import com.fasterxml.jackson.databind.ObjectMapper;
-import com.sun.net.httpserver.HttpExchange;
-import com.sun.net.httpserver.HttpHandler;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.http.ResponseEntity;
+import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.RestController;
 
-import java.io.IOException;
-import java.nio.charset.StandardCharsets;
-import java.util.stream.Collectors;
+import java.util.List;
 
-public class ProductController implements HttpHandler {
+@RestController
+public class ProductController {
 
-    private static final ObjectMapper mapper = new ObjectMapper();
     private final ProductRepository productRepository;
+    private final String imageBaseUrl;
 
-    public ProductController(ProductRepository productRepository) {
+    public ProductController(ProductRepository productRepository,
+                             @Value("${app.image-base-url:http://localhost:8080}") String imageBaseUrl) {
         this.productRepository = productRepository;
+        this.imageBaseUrl = imageBaseUrl;
     }
 
-    @Override
-    public void handle(HttpExchange exchange) throws IOException {
-        System.out.println("hitting the product controller");
-
-        try {
-            var products = productRepository.findAll()
-                    .stream()
-                    .map(p -> {
-                        var dto = new ProductResponse();
-                        dto.productId = p.getProductId();
-                        dto.name = p.getName();
-                        dto.price = p.getPrice();
-                        dto.imageUrl =
-                                "http://localhost:8080/images/" +
-                                        p.getProductId().toLowerCase() + ".jpg";
-                        return dto;
-                    })
-                    .collect(Collectors.toList());
-
-            byte[] bytes = mapper
-                    .writeValueAsString(products)
-                    .getBytes(StandardCharsets.UTF_8);
-
-            exchange.getResponseHeaders()
-                    .add("Content-Type", "application/json");
-
-            exchange.sendResponseHeaders(200, bytes.length);
-            exchange.getResponseBody().write(bytes);
-
-        } catch (Exception e) {
-            e.printStackTrace();
-            exchange.sendResponseHeaders(500, -1);
-        } finally {
-            exchange.close();
-        }
+    @GetMapping("/products")
+    public ResponseEntity<List<ProductResponse>> getProducts() {
+        List<ProductResponse> products = productRepository.findAll().stream()
+                .filter(p -> p.isActive())
+                .map(p -> {
+                    var dto = new ProductResponse();
+                    dto.productId = p.getProductId();
+                    dto.name = p.getName();
+                    dto.price = p.getPrice();
+                    // Use stored filename if available, otherwise fall back to default pattern
+                    String filename = p.getImageFilename() != null
+                            ? p.getImageFilename()
+                            : p.getProductId().toLowerCase() + ".jpg";
+                    dto.imageUrl = imageBaseUrl + "/images/" + filename;
+                    return dto;
+                })
+                .toList();
+        return ResponseEntity.ok(products);
     }
 }

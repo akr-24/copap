@@ -1,99 +1,84 @@
 package com.copap.product;
 
-import java.sql.*;
-import java.util.*;
+import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.jdbc.core.RowMapper;
+import org.springframework.stereotype.Repository;
 
+import java.util.Collections;
+import java.util.List;
+import java.util.Optional;
+
+@Repository
 public class JdbcProductRepository implements ProductRepository {
 
-    private final Connection connection;
+    private final JdbcTemplate jdbcTemplate;
 
-    public JdbcProductRepository(Connection connection) {
-        this.connection = connection;
+    private static final RowMapper<Product> PRODUCT_ROW_MAPPER = (rs, rowNum) -> new Product(
+            rs.getString("product_id"),
+            rs.getString("name"),
+            rs.getDouble("price"),
+            rs.getBoolean("active"),
+            rs.getString("image_filename")
+    );
+
+    public JdbcProductRepository(JdbcTemplate jdbcTemplate) {
+        this.jdbcTemplate = jdbcTemplate;
     }
 
     @Override
     public Optional<Product> findById(String productId) {
-        try {
-            PreparedStatement stmt =
-                    connection.prepareStatement(
-                            "SELECT * FROM products WHERE product_id = ? AND active = true"
-                    );
-
-            stmt.setString(1, productId);
-            ResultSet rs = stmt.executeQuery();
-
-            if (!rs.next()) return Optional.empty();
-
-            return Optional.of(mapRow(rs));
-
-        } catch (SQLException e) {
-            throw new RuntimeException(e);
-        }
+        var results = jdbcTemplate.query(
+                "SELECT product_id, name, price, active, image_filename FROM products WHERE product_id = ? AND active = true",
+                PRODUCT_ROW_MAPPER, productId
+        );
+        return results.stream().findFirst();
     }
 
     @Override
     public List<Product> findByIds(List<String> productIds) {
         if (productIds.isEmpty()) return List.of();
-
-        String placeholders =
-                String.join(",", Collections.nCopies(productIds.size(), "?"));
-
-        String sql =
-                "SELECT * FROM products WHERE product_id IN (" +
-                        placeholders +
-                        ") AND active = true";
-
-        try {
-            PreparedStatement stmt =
-                    connection.prepareStatement(sql);
-
-            for (int i = 0; i < productIds.size(); i++) {
-                stmt.setString(i + 1, productIds.get(i));
-            }
-
-            ResultSet rs = stmt.executeQuery();
-
-            List<Product> products = new ArrayList<>();
-
-            while (rs.next()) {
-                products.add(mapRow(rs));
-            }
-
-            return products;
-
-        } catch (SQLException e) {
-            throw new RuntimeException(e);
-        }
+        String placeholders = String.join(",", Collections.nCopies(productIds.size(), "?"));
+        return jdbcTemplate.query(
+                "SELECT product_id, name, price, active, image_filename FROM products WHERE product_id IN (" + placeholders + ") AND active = true",
+                PRODUCT_ROW_MAPPER, productIds.toArray()
+        );
     }
 
     @Override
     public List<Product> findAll() {
-        try {
-            PreparedStatement stmt =
-                    connection.prepareStatement(
-                            "SELECT * FROM products"
-                    );
+        return jdbcTemplate.query(
+                "SELECT product_id, name, price, active, image_filename FROM products",
+                PRODUCT_ROW_MAPPER
+        );
+    }
 
-            ResultSet rs = stmt.executeQuery();
-            List<Product> products = new ArrayList<>();
+    public void save(String productId, String name, double price) {
+        jdbcTemplate.update(
+                "INSERT INTO products (product_id, name, price, active) VALUES (?, ?, ?, true)",
+                productId, name, price
+        );
+    }
 
-            while (rs.next()) {
-                products.add(mapRow(rs));
-            }
-
-            return products;
-
-        } catch (SQLException e) {
-            throw new RuntimeException(e);
+    public void update(String productId, String name, Double price, Boolean active) {
+        if (name != null) {
+            jdbcTemplate.update("UPDATE products SET name = ? WHERE product_id = ?", name, productId);
+        }
+        if (price != null) {
+            jdbcTemplate.update("UPDATE products SET price = ? WHERE product_id = ?", price, productId);
+        }
+        if (active != null) {
+            jdbcTemplate.update("UPDATE products SET active = ? WHERE product_id = ?", active, productId);
         }
     }
 
-    private Product mapRow(ResultSet rs) throws SQLException {
-        return new Product(
-                rs.getString("product_id"),
-                rs.getString("name"),
-                rs.getDouble("price"),
-                rs.getBoolean("active")
+    public void updateImageFilename(String productId, String filename) {
+        jdbcTemplate.update(
+                "UPDATE products SET image_filename = ? WHERE product_id = ?",
+                filename, productId
         );
+    }
+
+    public void softDelete(String productId) {
+        jdbcTemplate.update("UPDATE products SET active = false WHERE product_id = ?", productId);
     }
 }

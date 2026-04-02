@@ -1,9 +1,10 @@
 package com.copap.api.dto;
 
+import jakarta.validation.constraints.NotEmpty;
 import java.util.List;
 
 public class CreateOrderRequest {
-    public String customerId;
+    @NotEmpty
     public List<String> productIds;
-    public String addressId;  // Shipping address ID
+    public String addressId;
 }

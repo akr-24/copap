@@ -2,132 +2,137 @@ package com.copap.repository;
 
 import com.copap.model.Order;
 import com.copap.model.OrderStatus;
+import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.stereotype.Repository;
+import org.springframework.transaction.annotation.Transactional;
 
-import java.sql.*;
+import java.sql.Timestamp;
 import java.time.Instant;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
 
+@Repository
 public class JdbcOrderRepository implements OrderRepository {
 
-    private final Connection connection;
+    private final JdbcTemplate jdbcTemplate;
 
-    public JdbcOrderRepository(Connection connection) {
-        this.connection = connection;
+    public JdbcOrderRepository(JdbcTemplate jdbcTemplate) {
+        this.jdbcTemplate = jdbcTemplate;
     }
 
     @Override
+    @Transactional
     public void save(Order order) {
-        try{
-            PreparedStatement stmt =
-                    connection.prepareStatement(
-                            """
-                            INSERT INTO orders
-                            (order_id, status, customer_id, total_amount, version, created_at, shipping_address_id)
-                            VALUES (?, ?, ?, ?, ?, ?, ?)
-                            ON CONFLICT (order_id) DO UPDATE
-                            SET status = EXCLUDED.status,
-                                version = EXCLUDED.version,
-                                shipping_address_id = COALESCE(EXCLUDED.shipping_address_id, orders.shipping_address_id)
-                            """
-                    );
+        jdbcTemplate.update("""
+                INSERT INTO orders
+                    (order_id, status, customer_id, total_amount, version, created_at, shipping_address_id)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT (order_id) DO UPDATE
+                    SET status = EXCLUDED.status,
+                        version = EXCLUDED.version,
+                        shipping_address_id = COALESCE(EXCLUDED.shipping_address_id, orders.shipping_address_id)
+                """,
+                order.getOrderId(),
+                order.getStatus().name(),
+                order.getCustomerId(),
+                order.totalAmount(),
+                order.getVersion(),
+                Timestamp.from(Instant.now()),
+                order.getShippingAddressId()
+        );
 
-            stmt.setString(1, order.getOrderId());
-            stmt.setString(2, order.getStatus().name());
-            stmt.setString(3, order.getCustomerId());
-            stmt.setDouble(4, order.totalAmount());
-            stmt.setLong(5, order.getVersion());
-            stmt.setTimestamp(6, Timestamp.from(Instant.now()));
-            stmt.setString(7, order.getShippingAddressId());
-
-            stmt.executeUpdate();
-
-        } catch (SQLException e) {
-            throw new RuntimeException(e);
+        // Persist order-product relationships in order_items
+        if (!order.getProductIds().isEmpty()) {
+            jdbcTemplate.update(
+                    "DELETE FROM order_items WHERE order_id = ?",
+                    order.getOrderId()
+            );
+            for (String productId : order.getProductIds()) {
+                jdbcTemplate.update(
+                        "INSERT INTO order_items (order_id, product_id) VALUES (?, ?) ON CONFLICT DO NOTHING",
+                        order.getOrderId(), productId
+                );
+            }
         }
     }
 
     @Override
-    public Optional<Order> findById (String orderId) {
-        try{
-           PreparedStatement stmt = connection.prepareStatement(" Select * from orders where order_id=?");
-           stmt.setString(1, orderId);
-           ResultSet rs = stmt.executeQuery();
-           if (!rs.next()) return Optional.empty();
-            Order order = Order.fromDb(
-                    rs.getString("order_id"),                       // orderId
-                    OrderStatus.valueOf(rs.getString("status")),    // status
-                    rs.getString("customer_id"),                    // customerId
-                    List.of(),                                      // productIds (TEMP)
-                    rs.getDouble("total_amount"),
-                    rs.getLong("version"),                          // version
-                    rs.getString("shipping_address_id")             // shippingAddressId
-            );
-
-            return Optional.of(order);
-        }catch(SQLException e){
-            throw new RuntimeException(e);
-        }
+    public Optional<Order> findById(String orderId) {
+        var rows = jdbcTemplate.query(
+                "SELECT order_id, status, customer_id, total_amount, version, shipping_address_id FROM orders WHERE order_id = ?",
+                (rs, rowNum) -> {
+                    List<String> productIds = jdbcTemplate.queryForList(
+                            "SELECT product_id FROM order_items WHERE order_id = ?",
+                            String.class,
+                            orderId
+                    );
+                    return Order.fromDb(
+                            rs.getString("order_id"),
+                            OrderStatus.valueOf(rs.getString("status")),
+                            rs.getString("customer_id"),
+                            productIds,
+                            rs.getDouble("total_amount"),
+                            rs.getLong("version"),
+                            rs.getString("shipping_address_id")
+                    );
+                },
+                orderId
+        );
+        return rows.stream().findFirst();
     }
 
     @Override
     public boolean exists(String orderId) {
-        return findById(orderId).isPresent();
+        var count = jdbcTemplate.queryForObject(
+                "SELECT COUNT(*) FROM orders WHERE order_id = ?",
+                Long.class,
+                orderId
+        );
+        return count != null && count > 0;
     }
 
     @Override
     public void updateWithVersion(Order order, long expectedVersion) {
-        try {
-            PreparedStatement stmt = connection.prepareStatement(
-                    """
-                    UPDATE orders
-                    SET status = ?, version = version + 1
-                    WHERE order_id = ? AND version = ?
-                    """
+        int updated = jdbcTemplate.update("""
+                UPDATE orders
+                SET status = ?, version = version + 1
+                WHERE order_id = ? AND version = ?
+                """,
+                order.getStatus().name(),
+                order.getOrderId(),
+                expectedVersion
+        );
+
+        if (updated == 0) {
+            throw new OptimisticLockException(
+                    "Version mismatch for order " + order.getOrderId()
             );
-
-            stmt.setString(1, order.getStatus().name());
-            stmt.setString(2, order.getOrderId());
-            stmt.setLong(3, expectedVersion);
-
-            int updated = stmt.executeUpdate();
-
-            if (updated == 0) {
-                throw new OptimisticLockException(
-                        "Version mismatch for order " + order.getOrderId()
-                );
-            }
-
-        } catch (SQLException e) {
-            throw new RuntimeException(e);
         }
     }
 
     @Override
     public List<Order> findByCustomerId(String customerId) {
-        try {
-            PreparedStatement stmt = connection.prepareStatement(
-                    "SELECT * FROM orders WHERE customer_id = ? ORDER BY created_at DESC"
-            );
-            stmt.setString(1, customerId);
-            ResultSet rs = stmt.executeQuery();
-
-            List<Order> orders = new java.util.ArrayList<>();
-            while (rs.next()) {
-                Order order = Order.fromDb(
-                        rs.getString("order_id"),
-                        OrderStatus.valueOf(rs.getString("status")),
-                        rs.getString("customer_id"),
-                        List.of(), // productIds - would need separate query for order_items
-                        rs.getDouble("total_amount"),
-                        rs.getLong("version"),
-                        rs.getString("shipping_address_id")
-                );
-                orders.add(order);
-            }
-            return orders;
-        } catch (SQLException e) {
-            throw new RuntimeException(e);
-        }
+        return jdbcTemplate.query(
+                "SELECT order_id, status, customer_id, total_amount, version, shipping_address_id FROM orders WHERE customer_id = ? ORDER BY created_at DESC",
+                (rs, rowNum) -> {
+                    String orderId = rs.getString("order_id");
+                    List<String> productIds = jdbcTemplate.queryForList(
+                            "SELECT product_id FROM order_items WHERE order_id = ?",
+                            String.class,
+                            orderId
+                    );
+                    return Order.fromDb(
+                            orderId,
+                            OrderStatus.valueOf(rs.getString("status")),
+                            rs.getString("customer_id"),
+                            productIds,
+                            rs.getDouble("total_amount"),
+                            rs.getLong("version"),
+                            rs.getString("shipping_address_id")
+                    );
+                },
+                customerId
+        );
     }
 }
