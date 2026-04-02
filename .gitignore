@@ -4,7 +4,6 @@ target/
 # IntelliJ IDEA
 .idea/
 out/
-lib
 *.iml
 
 # Local dev credentials — never commit
